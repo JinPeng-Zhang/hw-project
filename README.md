@@ -2,7 +2,9 @@
 hw project 11/29
 
 替换文件 ns3.45/src/internet/model/ipv4-global-routing.cc和ns3.45/src/point-to-point/model/point-to-point-net-device.cc
+
 ecmp使用方法：ecmpProbability.txt是权重修改文件，ecmpProbabilityConfig.txt是权重初始化文件
+
 一、PFC 功能集成指南
 
 1.1 替换链路创建方式
