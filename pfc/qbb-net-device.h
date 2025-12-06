@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <map>
+#include <set>
 
 namespace ns3 {
 
@@ -20,6 +21,8 @@ public:
   TokenBucket(double pps, uint32_t burst);
   void Refill();
   bool TryConsume(uint32_t pkts = 1);
+  void Refund(uint32_t pkts = 1);  // 新增：令牌退回
+
 private:
   double m_pps;
   uint32_t m_capacity;
@@ -27,7 +30,7 @@ private:
   Time m_lastRefill;
 };
 
-// 每个出端口一个令牌桶
+// 每个出端口一个令牌桶 + 公平轮询仲裁器
 class EgressTokenManager : public Object
 {
 public:
@@ -38,8 +41,22 @@ public:
   void RegisterEgressPort(uint32_t portId, DataRate rate, uint32_t avgPktSize);
   bool TryConsumeToken(uint32_t portId, uint32_t pkts = 1);
 
+  // 新增：公平令牌分配接口
+  void RegisterDemand(uint32_t egressPortId, uint32_t ingressPortId);
+  void UnregisterDemand(uint32_t egressPortId, uint32_t ingressPortId);
+  bool TryConsumeTokenFair(uint32_t egressPortId, uint32_t ingressPortId, uint32_t pkts = 1);
+
 private:
   std::map<uint32_t, std::unique_ptr<TokenBucket>> m_buckets;
+  
+  // 新增：每个出端口的轮询仲裁器
+  struct PortArbiter {
+    std::set<uint32_t> activeIngressPorts;  // 活跃入端口集合
+    uint32_t lastServedIngress = 0;         // 上次授予的入端口id
+  };
+  std::map<uint32_t, PortArbiter> m_arbiters;
+  
+  uint32_t SelectNextIngress(PortArbiter& arbiter);
 };
 
 class QbbNetDevice : public PointToPointNetDevice
@@ -67,7 +84,7 @@ public:
   uint64_t GetRxXonCount(uint8_t prio) const { return m_pfcRxXon[prio]; }
 
 protected:
-  // 覆盖聚合通知：在 Ipv4 绑定后安装“吞掉”回调，关闭基类上交
+  // 覆盖聚合通知：在 Ipv4 绑定后安装"吞掉"回调，关闭基类上交
   void NotifyNewAggregate() override;
 
   // 解析优先级（IPv4 TOS 高3位）；安全处理 PPP 是否存在
@@ -79,10 +96,10 @@ private:
   uint32_t GetEgressPortOrInvalid(Ptr<const Packet> pkt) const;
   struct TxItem { Ptr<Packet> p; Address dst; uint16_t proto; };
 
-  // 安装/重申“吞掉”上行回调（关闭基类上交）
+  // 安装/重申"吞掉"上行回调（关闭基类上交）
   void HookL3Divert();
 
-  // 吞掉回调：返回 true 表示“已处理”，阻断 Node/Ipv4（短签名）
+  // 吞掉回调：返回 true 表示"已处理"，阻断 Node/Ipv4（短签名）
   bool L3Swallow(Ptr<NetDevice> dev,
                  Ptr<const Packet> p,
                  uint16_t protocol,
@@ -150,7 +167,7 @@ private:
 
   Ptr<EgressTokenManager> m_tokenMgr;
 
-  // 是否已安装“吞掉”回调
+  // 是否已安装"吞掉"回调
   bool m_l3DivertInstalled{false};
 };
 
