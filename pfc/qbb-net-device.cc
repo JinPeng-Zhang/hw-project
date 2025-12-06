@@ -23,6 +23,7 @@
 #include <vector>
 #include <iostream>
 #include <algorithm>
+#include <set>
 
 namespace ns3 {
 
@@ -49,6 +50,11 @@ bool TokenBucket::TryConsume(uint32_t pkts)
     return true;
   }
   return false;
+}
+
+void TokenBucket::Refund(uint32_t pkts)
+{
+  m_tokens = std::min(m_tokens + pkts, static_cast<double>(m_capacity));
 }
 
 // ==================== EgressTokenManager ====================
@@ -81,6 +87,59 @@ bool EgressTokenManager::TryConsumeToken(uint32_t portId, uint32_t pkts)
   auto it = m_buckets.find(portId);
   if (it == m_buckets.end()) return true;
   return it->second->TryConsume(pkts);
+}
+
+void EgressTokenManager::RegisterDemand(uint32_t egressPortId, uint32_t ingressPortId)
+{
+  m_arbiters[egressPortId].activeIngressPorts.insert(ingressPortId);
+}
+
+void EgressTokenManager::UnregisterDemand(uint32_t egressPortId, uint32_t ingressPortId)
+{
+  m_arbiters[egressPortId].activeIngressPorts.erase(ingressPortId);
+}
+
+uint32_t EgressTokenManager::SelectNextIngress(PortArbiter& arbiter)
+{
+  if (arbiter.activeIngressPorts.empty()) return 0;
+  
+  // 从上次服务的入端口的下一个开始找
+  auto it = arbiter.activeIngressPorts.upper_bound(arbiter.lastServedIngress);
+  if (it == arbiter.activeIngressPorts.end()) {
+    it = arbiter.activeIngressPorts.begin(); // 回绕
+  }
+  return *it;
+}
+
+bool EgressTokenManager::TryConsumeTokenFair(uint32_t egressPortId, uint32_t ingressPortId, uint32_t pkts)
+{
+  auto bucketIt = m_buckets.find(egressPortId);
+  if (bucketIt == m_buckets.end()) return true; // 没有注册该端口，直接放行
+  
+  // 1. 先尝试消耗令牌
+  if (!bucketIt->second->TryConsume(pkts)) {
+    return false; // 令牌不足，谁都拿不到
+  }
+  
+  // 2. 检查是否有竞争
+  auto& arbiter = m_arbiters[egressPortId];
+  if (arbiter.activeIngressPorts.empty() || arbiter.activeIngressPorts.size() == 1) {
+    // 没有竞争，直接给
+    return true;
+  }
+  
+  // 3. 轮询选择下一个入端口
+  uint32_t nextIngress = SelectNextIngress(arbiter);
+  
+  if (nextIngress == ingressPortId) {
+    // 轮到你了
+    arbiter.lastServedIngress = ingressPortId;
+    return true;
+  } else {
+    // 不是你的轮次，令牌退回
+    bucketIt->second->Refund(pkts);
+    return false;
+  }
 }
 
 // ==================== QbbNetDevice ====================
@@ -208,19 +267,14 @@ void QbbNetDevice::TryDequeue()
     return;
   }
 
-  // Copy 一份用于发送，保护队列中的原始数据
   Ptr<Packet> pktToSend = item.p->Copy();
   
   if (!PointToPointNetDevice::Send(pktToSend, item.dst, item.proto)) {
-    // 发送失败，item.p 未被修改，可以重试
     m_txEvent = Simulator::Schedule(MicroSeconds(10), &QbbNetDevice::TryDequeue, this);
     return;
   }
 
-  // 发送成功，移除队头
   m_txq[pr].pop();
-  
-  // 继续处理下一个包
   m_txEvent = Simulator::ScheduleNow(&QbbNetDevice::TryDequeue, this);
 }
 
@@ -276,7 +330,6 @@ void QbbNetDevice::HandleMacRx(Ptr<const Packet> p)
 {
   Ptr<Packet> cp = p->Copy();
 
-  // PFC 控制帧
   PppHeader ppp;
   if (cp->PeekHeader(ppp) && ppp.GetProtocol() == PFC_PPP_PROTO) {
     cp->RemoveHeader(ppp);
@@ -314,7 +367,6 @@ void QbbNetDevice::HandleMacRx(Ptr<const Packet> p)
     return;
   }
 
-  // 数据帧
   EnsureTokenManager();
   uint8_t pr = GetPrioFromPacket(p);
 
@@ -335,7 +387,6 @@ bool QbbNetDevice::IsLocalDelivery(Ptr<const Packet> pkt) const
   }
   Ipv4Header ip;
   if (!cp->PeekHeader(ip)) {
-    // 非 IPv4 或解析失败：视为无需按出端口限速，避免误扣端口0
     return true;
   }
 
@@ -396,12 +447,25 @@ void QbbNetDevice::DoIngressDrain()
 
   Ptr<Packet> pkt = m_ingressQ[pick].front();
 
-  // 仅对“需要转发”的包按出端口令牌限速
   uint32_t egressPort = GetEgressPortOrInvalid(pkt);
+  
+  // *** 关键修改：公平令牌分配 ***
   if (egressPort != kInvalidPortId) {
-    if (!m_tokenMgr->TryConsumeToken(egressPort, 1)) {
+    uint32_t myIngressId = GetIfIndex(); // 本入端口的唯一标识
+    
+    // 注册需求
+    m_tokenMgr->RegisterDemand(egressPort, myIngressId);
+    
+    // 公平获取令牌
+    if (!m_tokenMgr->TryConsumeTokenFair(egressPort, myIngressId, 1)) {
+      // 令牌不足或不是我的轮次，重试
       m_ingressDrainEv = Simulator::Schedule(MicroSeconds(10), &QbbNetDevice::DoIngressDrain, this);
       return;
+    }
+    
+    // 取消需求（如果这是最后一个包）
+    if (m_ingressQ[pick].size() == 1) {
+      m_tokenMgr->UnregisterDemand(egressPort, myIngressId);
     }
   }
 
@@ -577,3 +641,4 @@ void QbbNetDevice::PrintAllPfcCounters()
 }
 
 } // namespace ns3
+
