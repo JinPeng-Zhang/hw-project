@@ -1,0 +1,19 @@
+build_lib(
+    LIBNAME generic-topology
+    SOURCE_FILES
+        model/topo-traffic-builder.cc
+        model/sim-stats-collector.cc
+    HEADER_FILES
+        model/common-defs.h
+        model/topo-traffic-builder.h
+        model/sim-stats-collector.h
+    LIBRARIES_TO_LINK
+        ${libcore}
+        ${libnetwork}
+        ${libinternet}
+        ${libpoint-to-point}
+        ${libapplications}
+        ${libflow-monitor}
+    TEST_SOURCES
+        test/generic-topology-test-suite.cc
+)
