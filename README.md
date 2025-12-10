@@ -288,3 +288,141 @@ int main(int argc, char* argv[]) {
 
 禁用 PFC + perpacket ECMP
 ./your-program --pfc=0 --ecmp=perpacket
+
+
+```
+---
+
+五、关于流量生成和拓扑：
+
+由src下的generic-topology库完成功能
+
+拓扑文件作出修改：
+
+之前的是所有链路带宽一样
+
+现在把核心层-汇聚层，汇聚层-汇聚层带宽设为了汇聚层-边缘层的4倍
+
+
+
+
+---
+
+六、关于获取状态
+
+sim-stats-collector库最后会返回一个results：
+
+获取三个全局指标：
+```bash
+double myTput = results.global.throughputMbps;
+double myDelay = results.global.avgDelayMs;
+double myLoss = results.global.lossRatePct;
+```
+
+获取每条链路的实时队列以及链路利用率
+
+```bash
+LinkTimeSeries myLinkData = results.links[idx];
+std::vector<double> arrQueueA = myLinkData.queueSnapshotsA;
+std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
+std::vector<double> arrUtil   = myLinkData.utilSnapshots;
+```
+
+延迟，带宽的设置：
+见topo-traffic-builder.cc：
+
+```bash
+double delay_ms = (w * 2.0) / 100.0;
+double bandwidth_mbps = 50.0 / w; 
+```
+
+这个w是auto.txt文件里面的第三列，现在50.0 / w的话等于汇聚层-边缘层带宽0.5Mbps，核心层-汇聚层和汇聚层-汇聚层带宽2Mbps，要设多大带宽改这个50就行
+
+
+---
+七、如何配置本项目
+
+ns-3.45
+1. Install all dependencies required by ns-3.
+```
+
+# minimal requirements for C++:
+apt-get install gcc g++ python3 python3-pip cmake
+
+```
+
+Check [ns-3 requirements](https://www.nsnam.org/docs/tutorial/html/getting-started.html#prerequisites/)
+
+2. Install ZMQ, Protocol Buffers and pkg-config libs:
+```
+sudo apt-get update
+apt-get install libzmq5 libzmq3-dev
+apt-get install libprotobuf-dev
+apt-get install protobuf-compiler
+apt-get install pkg-config
+```
+
+3. Download and install ns3
+
+```
+wget https://www.nsnam.org/releases/ns-allinone-3.45.tar.bz2
+tar xf ns-allinone-3.45.tar.bz2
+cd ns-allinone-3.45
+```
+
+4. Clone ns3-gym repository into `contrib` directory and change the branch:
+```
+cd ./ns-3.45/contrib
+git clone https://github.com/tkn-tub/ns3-gym.git ./opengym
+cd opengym/
+git checkout app-ns-3.36+
+```
+Check [working with cmake](https://www.nsnam.org/docs/manual/html/working-with-cmake.html)
+
+It is important to use the `opengym` as the name of the ns3-gym app directory. 
+
+ns3gym
+ 
+Install ns3gym located in model/ns3gym (Python3 required)
+```
+cd ./contrib/opengym/
+pip3 install --user ./model/ns3gym
+```
+or
+```
+python3 -m venv ns3gym-venv
+source ./ns3gym-venv/bin/activate
+pip3 install ./model/ns3gym
+```
+
+
+项目编译和运行
+
+此处需要改动我们的项目名称my-open-gym为opengym
+
+Configure and build ns-3 project:
+```
+cd ../../
+./ns3 configure --enable-examples
+./ns3 build
+```
+Note: Opengym Protocol Buffer messages (C++ and Python) are build during configure.
+
+Run a project:
+
+```
+cd ./contrib/opengym/examples/opengym/ 
+./simple_test.py
+```
+
+create python environment by using:
+
+```
+conda env create -f env.yml
+conda activate qsiurp_env
+```
+
+Start training by running the following command:
+```
+python train.py
+```
