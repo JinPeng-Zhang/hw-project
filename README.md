@@ -411,18 +411,10 @@ Note: Opengym Protocol Buffer messages (C++ and Python) are build during configu
 Run a project:
 
 ```
-cd ./contrib/opengym/examples/opengym/ 
-./simple_test.py
-```
-
-create python environment by using:
-
-```
 conda env create -f env.yml
-conda activate qsiurp_env
+conda activate LoadBalancingRL_env
 ```
-
-Start training by running the following command:
 ```
+cd ./contrib/opengym/examples/opengym/ 
 python train.py
 ```
