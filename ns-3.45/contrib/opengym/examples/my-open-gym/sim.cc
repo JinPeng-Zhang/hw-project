@@ -3,6 +3,9 @@
 #include "ns3/topo-traffic-builder.h"
 #include "ns3/sim-stats-collector.h"
 
+#include "pfc/qbb-point-to-point-helper.h"
+#include "pfc/qbb-net-device.h"
+
 #include "rl-env.h"
 #include "ns3/opengym-module.h"
 #include <iostream>

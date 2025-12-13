@@ -144,8 +144,8 @@ MyGymEnv::GetObservation()
 
   //修改获取全部的链路利用率数据
 
-   std::vector<int> targets = {10, 11, 12};
-   for (int idx : targets) {
+  std::vector<int> targets = {10, 11, 12};
+  for (int idx : targets) {
        if (idx < (int)results.links.size()) {
   LinkTimeSeries myLinkData = results.links[idx];
 
@@ -153,7 +153,7 @@ MyGymEnv::GetObservation()
   // std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
   std::vector<double> arrUtil   = myLinkData.utilSnapshots;
   double m_linkload = arrUtil.average();
-          // double linkload_sum = std::accumulate(arrUtil.begin(), arrUtil.end(), 0.0);
+  // double linkload_sum = std::accumulate(arrUtil.begin(), arrUtil.end(), 0.0);
 
 
   // 获取pfc触发次数

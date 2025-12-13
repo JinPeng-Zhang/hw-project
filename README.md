@@ -11,20 +11,11 @@ ns3.45/src/internet/model/ipv4-global-routing.cc
 拓扑和流量生成对应：
 ns3.45/src/generic-topology
 
-一、PFC 功能集成指南
+## 一、PFC 功能集成指南
 
 1.1 替换链路创建方式
 
-原有代码（标准 P2P）：
-
-```cpp
-PointToPointHelper p2p;
-p2p.SetDeviceAttribute("DataRate", StringValue("10Gbps"));
-p2p.SetChannelAttribute("Delay", StringValue("1ms"));
-p2p.Install(node1, node2);
-```
-
-修改为（支持 PFC）：
+原有代码（标准 P2P）修改为（支持 PFC）：
 
 ```cpp
 #include "pfc/qbb-point-to-point-helper.h"
@@ -42,7 +33,7 @@ qbb.SetPfcAttribute("DefaultQuanta", UintegerValue(65535)); // 暂停时长
 qbb.Install(node1, node2);
 ```
 
-1.2 全局 PFC 参数配置（可选）
+### 全局 PFC 参数配置（可选）
 
 在创建拓扑**之前**通过 `Config::SetDefault` 统一配置：
 
@@ -53,7 +44,7 @@ Config::SetDefault("ns3::QbbNetDevice::PfcHighPkts", UintegerValue(12));
 Config::SetDefault("ns3::QbbNetDevice::PfcLowPkts", UintegerValue(6));
 ```
 
-1.3 运行时动态调整（推荐）
+### 运行时动态调整（推荐）
 
 参考 `experiments.cc` 中的 `ApplyPfcConfig` 函数：
 
@@ -71,7 +62,7 @@ void ApplyPfcConfig(bool enable, uint32_t highPkts, uint32_t lowPkts) {
 ApplyPfcConfig(true, 8, 4);
 ```
 
-1.4 PFC 关键参数说明
+### PFC 关键参数说明
 
 | 参数              | 含义                   | 推荐值             |
 | --------------- | -------------------- | --------------- |
@@ -81,7 +72,7 @@ ApplyPfcConfig(true, 8, 4);
 | `DefaultQuanta` | XOFF 暂停时长（bit-times） | 65535（最大值）      |
 
 
-二、ECMP 功能集成指南
+##  二、ECMP 功能集成指南
 
 2.1 ECMP 模式配置
 
@@ -164,9 +155,8 @@ Simulator::Run();
 Simulator::Destroy();
 ```
 
----
 
-三、完整集成示例模板
+## 三、完整集成示例模板
 
 ```cpp
 #include <ns3/core-module.h>
@@ -284,9 +274,7 @@ int main(int argc, char* argv[]) {
 }
 ```
 
----
-
-四、命令行参数说明
+## 四、命令行参数说明
 
 编译后可通过命令行灵活配置：
 
@@ -301,22 +289,27 @@ int main(int argc, char* argv[]) {
 ```
 ---
 
-五、关于流量生成和拓扑：
+## 五、关于流量生成和拓扑：
 
-由src下的generic-topology库完成功能
+对应sim.cc中部分
 
 拓扑文件作出修改：
-
 之前的是所有链路带宽一样
-
 现在把核心层-汇聚层，汇聚层-汇聚层带宽设为了汇聚层-边缘层的4倍
 
 
+延迟，带宽的设置：
+见topo-traffic-builder.cc：
+
+```bash
+double delay_ms = (w * 2.0) / 100.0;
+double bandwidth_mbps = 50.0 / w; 
+```
+
+这个w是auto.txt文件里面的第三列，现在50.0 / w的话等于汇聚层-边缘层带宽0.5Mbps，核心层-汇聚层和汇聚层-汇聚层带宽2Mbps，要设多大带宽改这个50就行
 
 
----
-
-六、关于获取状态
+## 六、关于获取状态
 
 sim-stats-collector库最后会返回一个results：
 
@@ -336,19 +329,53 @@ std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
 std::vector<double> arrUtil   = myLinkData.utilSnapshots;
 ```
 
-延迟，带宽的设置：
-见topo-traffic-builder.cc：
+将对应代码以函数形式封装到了rl-env.cc了，包装在GetObservation()函数中，返回一个OpenGymBoxContainer<double>对象。
 
-```bash
-double delay_ms = (w * 2.0) / 100.0;
-double bandwidth_mbps = 50.0 / w; 
+这样做是可行的吗?问题包括：
+1. PFC触发次数的获取需要一个qbbnetdevice实例
+2. 获取全部链路利用率数据
+3. simstatscollector实例
+
+
+##  七、关于强化学习的设置
+
+### 动作空间：
+为每个节点分配符合下一跳个数的流量分配比例，如10个节点，每个节点都有2个下一跳，则动作空间大小为10*2=20，每个节点分配的流量总和为10。
+
+为了在ECMP和动作间建立映射，使用一个txt文件来储存这一分配比例：
+```
+ecmpProbability.txt
+```
+对此文件的修改在代码myns3env.py中的transform_action()函数中
+
+### 状态空间：
+状态空间被记录为  
+链路负载率的方差、PFC触发次数、平均延迟、乱序比例、丢包率、总吞吐量的组合
+
+
+### 奖励计算：
+在myns3env.py中的get_reward()函数中
+```
+Reward = eta * total_throughput - 
+                alpha * pfc_triggers - 
+                beta * link_load_var - 
+                gamma * end_to_end_delay - 
+                delta * out_of_order_ratio - 
+                epsilon * packet_loss_ratio
 ```
 
-这个w是auto.txt文件里面的第三列，现在50.0 / w的话等于汇聚层-边缘层带宽0.5Mbps，核心层-汇聚层和汇聚层-汇聚层带宽2Mbps，要设多大带宽改这个50就行
+
+###  模型和训练技术：
+
+使用stable-baselines3开源项目库的A2C算法，可选启用的训练技术包括step_schedule实现动态学习率，在train.py中配置。
+
+### 可视化与验证脚本：
+
+等待开发
 
 
----
-七、如何配置本项目
+
+##  八、如何配置本项目
 
 ns-3.45
 1. Install all dependencies required by ns-3.
