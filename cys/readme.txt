@@ -20,3 +20,7 @@ sim-stats-collector库最后会返回一个results：
         double delay_ms = (w * 2.0) / 100.0;
         double bandwidth_mbps = 50.0 / w; 
 这个w是auto.txt文件里面的第三列，现在50.0 / w的话等于汇聚层-边缘层带宽0.5Mbps，核心层-汇聚层和汇聚层-汇聚层带宽2Mbps，要设多大带宽改这个50就行
+
+运行：
+./ns3 run "scratch/module --flows=100 --transport=tcp --load-rate=1.5 --link-ref-mbps=0.5 --appsStop=30" 
+流量数目10000条总大小是1.5G左右；load-rate是负载率，要让链路瞬间拥塞队列开始累计，得大于1；appsStop看流数多不多来设置；link-ref-mbps必须设成和汇聚层-边缘层带宽一样
