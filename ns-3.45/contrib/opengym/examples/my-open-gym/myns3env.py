@@ -4,7 +4,8 @@ from ns3gym import ns3env
 from gym import spaces
 
 filepath =  "EcmpProbability.txt"
-length = 5  # 动作空间的维度，根据实际情况调整
+obs_length = 1680*3+3  # 观测空间的维度，根据实际情况调整
+act_length =   # 动作空间的维度，根据实际情况调整
 
 class MyNs3Env(ns3env.Ns3Env):
     def sample_simArgs(self):
@@ -24,48 +25,62 @@ class MyNs3Env(ns3env.Ns3Env):
         super().__init__(simArgs=self.sample_simArgs(), *args, **kwargs)
 
         # Redefine obs space
-        self.observation_space = spaces.Box(0.0, 100000.0, (4,), np.float64)
+        self.observation_space = spaces.Box(0.0, 100000.0, (obs_length,), np.float64)
         print("Observation space:", self.observation_space)
 
         # Redefine action space
-        self.action_space = spaces.Box(0, 1, (length,), np.uint64)
+        self.action_space = spaces.Box(0, 1, (act_length,), np.uint64)
         # self.action_space = spaces.Discrete(1000, start=1)
         print("Action space:", self.action_space)
 
 
     def transform_obs(self, obs):
-        link_load_var = obs[0]  # 链路负载的平均值
-        pfc_triggers = obs[1]      # PFC触发次数，统计
-        end_to_end_delay = obs[2]  # 端到端延迟
-        ecn_mark_ratio = obs[3]    # ECN标记比例
-        # out_of_order_ratio = obs[4] # 乱序率，重排序
-        packet_loss_ratio = obs[5]  # 丢包率
-        total_throughput = obs[6]   # 吞吐量
-        new_obs = np.array([link_load_var, pfc_triggers, end_to_end_delay, ecn_mark_ratio, out_of_order_ratio, packet_loss_ratio, total_throughput])
+        # 吞吐量
+        total_throughput = obs[0]   
+        # 端到端延迟
+        end_to_end_delay = obs[1]  
+        # 丢包率
+        packet_loss_ratio = obs[2]
+        # PFC触发次数，统计
+        pfc_triggers = obs[3]  
+        # 链路负载计算方差
+        link_load_var = np.var(obs[4:])
+        
+        # 乱序率，重排序out_of_order_ratio = obs[] 
+        # 收发队列长度queue_length = obs[]
+        
+        new_obs = np.array([total_throughput,end_to_end_delay,packet_loss_ratio,link_load_var,pfc_triggers], dtype=np.float64)
         return new_obs
 
 
     def transform_action(self, action):
-        # 读取文件中的动作值
-        with open(filepath, 'r') as f:
-            actions = f.readlines()
-        new_action = [np.uint64(action * self.segment_size), np.uint64(0)]
-        return new_action
+        # 将动作写入文件ecmpprobability.txt
+        with open(filepath, 'w') as f:
+            f.write('{}'.format(action))
+            f.close()
+        # 重启ECMP相关的ns3模块以应用新的ECMP概率
+        
+        # new_action = [np.uint64(action * self.segment_size), np.uint64(0)]
+        return 0
 
     def get_reward(self, obs ,eta, alpha ,beta ,gamma ,sigma ,delta, epsilon):
-        link_load_var = obs[0]  # 链路负载的平均值
-        pfc_triggers = obs[1]      # PFC触发次数，统计
-        end_to_end_delay = obs[2]  # 端到端延迟
-        ecn_mark_ratio = obs[3]    # ECN标记比例
-        # out_of_order_ratio = obs[4] # 乱序率，重排序
-        packet_loss_ratio = obs[5]  # 丢包率
-        total_throughput = obs[6]   # 吞吐量
+        # 吞吐量
+        total_throughput = obs[0]   
+        # 端到端延迟
+        end_to_end_delay = obs[1]  
+        # 丢包率
+        packet_loss_ratio = obs[2]
+        # PFC触发次数，统计
+        pfc_triggers = obs[3]  
+        # 链路负载计算方差
+        link_load_var = np.var(obs[4:])
+
         # 计算奖励函数
         reward = (eta * total_throughput - 
                   alpha * pfc_triggers - 
                   beta * link_load_var - 
                   gamma * end_to_end_delay - 
-                  delta * out_of_order_ratio - 
+                  # delta * out_of_order_ratio - 
                   epsilon * packet_loss_ratio)  # 计算奖励  
         return reward
 

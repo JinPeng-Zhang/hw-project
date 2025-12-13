@@ -19,7 +19,7 @@
 #include <iostream>
 #include <vector>
 #include <iomanip>
-
+#include "ns3/qbb-net-device.h"
 
 namespace ns3 {
 NS_LOG_COMPONENT_DEFINE ("ns3::MyGymEnv");
@@ -96,8 +96,6 @@ MyGymEnv::MyGymEnv (std::string prot, Time timeStep) : MyGymEnv(prot)
   m_envReward = 0.0;
   m_info = "no extra info";
   m_isGameOver = false;
-  m_new_ratio = 0;
-  m_nodeId = 0;
 }
 
 void
@@ -135,7 +133,6 @@ MyGymEnv::GetObservation()
   std::vector<uint32_t> shape = {parameterNum,};
 
   Ptr<OpenGymBoxContainer<double> > box = CreateObject<OpenGymBoxContainer<double> >(shape);
-  
 
   Ptr<SimStatsCollector> stats = CreateObject<SimStatsCollector>();
   stats->Setup(builder.GetLinks(), builder.GetFlows(), builder.GetAppsStopTime());
@@ -145,34 +142,35 @@ MyGymEnv::GetObservation()
   double m_average_delay = results.global.avgDelayMs;
   double m_packet_loss_ratio = results.global.lossRatePct;
 
-  
-  // std::vector<int> targets = {10, 11, 12};
-  // for (int idx : targets) {
-  //     if (idx < (int)results.links.size()) {
+  //修改获取全部的链路利用率数据
+
+   std::vector<int> targets = {10, 11, 12};
+   for (int idx : targets) {
+       if (idx < (int)results.links.size()) {
   LinkTimeSeries myLinkData = results.links[idx];
 
-  std::vector<double> arrQueueA = myLinkData.queueSnapshotsA;
-  std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
+  // std::vector<double> arrQueueA = myLinkData.queueSnapshotsA;
+  // std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
   std::vector<double> arrUtil   = myLinkData.utilSnapshots;
   double m_linkload = arrUtil.average();
           // double linkload_sum = std::accumulate(arrUtil.begin(), arrUtil.end(), 0.0);
 
 
+  // 获取pfc触发次数
+  // 创建一个qbb-net-device
+  Ptr<QbbNetDevice> qbbDev = CreateObject<QbbNetDevice>();
+  double m_pfc_trigger = qbbDev->PrintAllPfcCounters();
+
   //将类中的成员变量作为观测值返回
   box->AddValue(m_linkload);          // 链路负载率
-  box->AddValue(m_queuesize);         // 队列长度
   box->AddValue(m_pfc_trigger);        // PFC触发次数
   box->AddValue(m_average_delay);      // 平均延迟
-  box->AddValue(m_out_of_order_ratio);   // 乱序比例
+  //box->AddValue(m_out_of_order_ratio);   // 乱序比例
   box->AddValue(m_packet_loss_ratio);   // 丢包率
   box->AddValue(m_total_throughput);   // 总吞吐量
   
-  m_envReward = 0;
   // Print data
   // NS_LOG_INFO ("MyGetObservation: " << box);
-  m_totalBytesTx = 0;
-  m_bytesTx = 0;
-  m_bytesRx = 0;
 
   return box;
 }
