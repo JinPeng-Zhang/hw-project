@@ -36,22 +36,6 @@ MyGymEnv::~MyGymEnv ()
   NS_LOG_FUNCTION (this);
 }
 
-TypeId
-MyGymEnv::GetTypeId (void)
-{
-  static TypeId tid = TypeId ("ns3::MyGymEnv")
-    .SetParent<OpenGymEnv> ()
-    .SetGroupName ("OpenGym")
-  ;
-  return tid;
-}
-
-void
-MyGymEnv::DoDispose ()
-{
-  NS_LOG_FUNCTION (this);
-}
-
 Ptr<OpenGymSpace>
 MyGymEnv::GetActionSpace()
 {
@@ -131,6 +115,7 @@ Ptr<OpenGymSpace>
 MyGymEnv::GetObservationSpace()
 {
   uint32_t parameterNum = 9;
+  //
   float low = 0.0;
   float high = 1000000000.0;
   std::vector<uint32_t> shape = {parameterNum,};
@@ -143,8 +128,6 @@ MyGymEnv::GetObservationSpace()
 /*
 Collect observations
 */
-
-
 Ptr<OpenGymDataContainer>
 MyGymEnv::GetObservation()
 {
@@ -177,44 +160,20 @@ MyGymEnv::GetObservation()
 
   //将类中的成员变量作为观测值返回
   box->AddValue(m_linkload);          // 链路负载率
-  //box->AddValue(m_queuesize);         // 队列长度
-  //box->AddValue(m_flowdistribution);  // 流量分布比例
+  box->AddValue(m_queuesize);         // 队列长度
   box->AddValue(m_pfc_trigger);        // PFC触发次数
   box->AddValue(m_average_delay);      // 平均延迟
-  box->AddValue(m_ecn_mark_ratio);      // ECN标记比例
   box->AddValue(m_out_of_order_ratio);   // 乱序比例
   box->AddValue(m_packet_loss_ratio);   // 丢包率
   box->AddValue(m_total_throughput);   // 总吞吐量
   
   m_envReward = 0;
   // Print data
-  NS_LOG_INFO ("MyGetObservation: " << box);
+  // NS_LOG_INFO ("MyGetObservation: " << box);
   m_totalBytesTx = 0;
   m_bytesTx = 0;
   m_bytesRx = 0;
 
   return box;
 }
-
-// //补充rltimebase类中更多Trace方法在socket连接中用来更新参数
-// void
-// TcpTimeStepGymEnv::TxPktTrace(Ptr<const Packet> packet, const TcpHeader&, Ptr<const TcpSocketBase> socket)
-// {
-//   NS_LOG_FUNCTION (this);
-//   m_bytesTx += packet->GetSize ();
-// }
-
-// void
-// TcpTimeStepGymEnv::RxPktTrace(Ptr<const Packet> packet, const TcpHeader&, Ptr<const TcpSocketBase>)
-// {
-//   NS_LOG_FUNCTION (this);
-//   m_bytesRx += packet->GetSize ();
-// }
-
-// void TcpTimeStepGymEnv::RttTrace(Time, Time new_val)
-// {
-//   NS_LOG_FUNCTION (this);
-//   m_rtt = new_val;
-// }
-
 } // namespace ns3

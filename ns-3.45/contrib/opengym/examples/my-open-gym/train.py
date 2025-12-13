@@ -67,15 +67,15 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
         return True
 
 
-def step_schedule(initial_value: float, n_steps: int) -> Callable[[float], float]:
-    def func(progress_remaining: float) -> float:
-        lr = initial_value
-        for i in range(n_steps):
-            if progress_remaining < (i / n_steps):
-                lr -= initial_value / n_steps
-        return lr
+# def step_schedule(initial_value: float, n_steps: int) -> Callable[[float], float]:
+#     def func(progress_remaining: float) -> float:
+#         lr = initial_value
+#         for i in range(n_steps):
+#             if progress_remaining < (i / n_steps):
+#                 lr -= initial_value / n_steps
+#         return lr
 
-    return func
+#     return func
 
 startSim = True
 port = 0
@@ -87,7 +87,18 @@ data_to_transmit = 1000000
 error_p = 0.0
 mtu = 1500
 debug = True
-filepath =  "EcmpProbability.txt"
+filepath =  "ecmpProbability.txt"
+
+# 超参数
+eta, alpha, beta, gamma, delta, epsilon=1,1,1,1,1,1
+timestp=10000
+learning_rate=0.001
+n_steps=128
+ent_coe0f=0.01
+vf_coef=0.25
+policy_kwargs = dict(activation_fn=torch.nn.GELU, net_arch=[128,128])
+device =  'cuda'
+
 
 simArgs = {
     "--duration": simTime,
@@ -132,7 +143,8 @@ env_kwargs = {
 monitored_vec_env = VecMonitor(make_vec_env(myns3env.MyNs3Env, n_envs=3, seed=12, env_kwargs=env_kwargs),
                                filename=f'{log_dir}/monitor.csv')
 
-model = mymodel.A2Cmodel(monitored_vec_env, step_schedule(3e-4, 10))
+# model = mymodel.A2Cmodel(monitored_vec_env, step_schedule(3e-4, 10))
+model = mymodel.A2Cmodel(monitored_vec_env, lr=learning_rate)
 model.set_logger(configure(log_dir, ["stdout", "csv", "tensorboard"]))
 
 save_callback = SaveOnBestTrainingRewardCallback(history_len=1000,

@@ -30,7 +30,7 @@ n_steps=128
 ent_coe0f=0.01
 vf_coef=0.25
 policy_kwargs = dict(activation_fn=torch.nn.GELU, net_arch=[128,128])
-device =  'cuda'
+dev =  'cuda'
 
 # scaler = GradScaler()
 # with autocast():
@@ -53,9 +53,9 @@ def A2Cmodel(env,lr,batch_size,device):
                 # gamma=gamma,
                 # nsteps=n_steps,
                 # en_coef=ent_coef,
-               # vf_coef=vf_coef,
+                # vf_coef=vf_coef,
                 # policy_kwargs=policy_kwargs,
-                device=device
+                device=dev
                 )
     return model
 # # 训练优化
