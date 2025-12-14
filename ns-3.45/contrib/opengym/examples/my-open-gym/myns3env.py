@@ -56,7 +56,7 @@ class MyNs3Env(ns3env.Ns3Env):
     def transform_action(self, action):
         # 将动作写入文件ecmpprobability.txt
         with open(filepath, 'w') as f:
-            f.write('{}'.format(action))
+            f.write()
             f.close()
         # 重启ECMP相关的ns3模块以应用新的ECMP概率
         

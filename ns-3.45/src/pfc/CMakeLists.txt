@@ -1,0 +1,23 @@
+build_lib(
+    LIBNAME pfc
+    SOURCE_FILES
+        pfc-header.cc
+        qbb-net-device.cc
+        qbb-point-to-point-helper.cc
+    HEADER_FILES
+        pfc-header.h
+        qbb-net-device.h
+        qbb-point-to-point-helper.h
+    LIBRARIES_TO_LINK
+        ${libcore}
+        ${libnetwork}
+        ${libinternet}
+        ${libpoint-to-point}
+        ${libapplications}
+        ${libflow-monitor}
+        ${libtraffic-control}
+        ${libcsma}
+        ${libmobility}
+        ${libinternet-apps}
+        ${libnetanim}
+)

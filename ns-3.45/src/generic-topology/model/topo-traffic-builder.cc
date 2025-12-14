@@ -2,6 +2,9 @@
 #include "topo-traffic-builder.h"
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/point-to-point-net-device.h"
+#include "pfc/qbb-point-to-point-helper.h"
+#include "pfc/qbb-net-device.h"
+
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -105,11 +108,17 @@ bool TopoTrafficBuilder::BuildAndInstall(std::string topoFilePath, std::string c
         double bandwidth_mbps = 50.0 / w; 
         ds << delay_ms << "ms"; bs << bandwidth_mbps << "Mbps";
         
-        p2p.SetChannelAttribute("Delay", StringValue(ds.str()));
-        p2p.SetDeviceAttribute("DataRate", StringValue(bs.str()));
+        //换成qbbnetdevice以支持PFC
+        QbbPointToPointHelper qbb;
+        qbb.SetChannelAttribute("Delay", StringValue(ds.str()));
+        qbb.SetDeviceAttribute("DataRate", StringValue(bs.str()));
+
+        //p2p.SetChannelAttribute("Delay", StringValue(ds.str()));
+        //p2p.SetDeviceAttribute("DataRate", StringValue(bs.str()));
         
         NodeContainer nc(m_nodes.Get(n1), m_nodes.Get(n2));
-        NetDeviceContainer ndc = p2p.Install(nc);
+        // NetDeviceContainer ndc = p2p.Install(nc);
+        NetDeviceContainer ndc = qbb.Install(nc);
         address.Assign(ndc); address.NewNetwork();
 
         Ptr<PointToPointNetDevice> d0 = DynamicCast<PointToPointNetDevice>(ndc.Get(0));

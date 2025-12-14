@@ -10,6 +10,9 @@ ns3.45/src/internet/model/ipv4-global-routing.cc
 ---
 拓扑和流量生成对应：
 ns3.45/src/generic-topology
+---
+强化学习和main文件：
+ns3.45/contirb/opengym/examples/my-open-gym
 
 ## 一、PFC 功能集成指南
 
@@ -329,12 +332,14 @@ std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
 std::vector<double> arrUtil   = myLinkData.utilSnapshots;
 ```
 
-将对应代码以函数形式封装到了rl-env.cc了，包装在GetObservation()函数中，返回一个OpenGymBoxContainer<double>对象。
+将对应代码以函数形式封装到rl-env.cc，包装在GetObservation()函数中，返回一个OpenGymBoxContainer<double>对象。
 
 这样做是可行的吗?问题包括：
 1. PFC触发次数的获取需要一个qbbnetdevice实例
 2. 获取全部链路利用率数据
 3. simstatscollector实例
+4. 获取拓扑关于下一跳的信息表
+5. ECMP读写文件的接口？只看到了读
 
 
 ##  七、关于强化学习的设置
@@ -350,8 +355,7 @@ ecmpProbability.txt
 
 ### 状态空间：
 状态空间被记录为  
-链路负载率的方差、PFC触发次数、平均延迟、乱序比例、丢包率、总吞吐量的组合
-
+链路负载率的方差、PFC触发次数、平均延迟、乱序比例、丢包率、总吞吐量的组合，在GetObservation()中
 
 ### 奖励计算：
 在myns3env.py中的get_reward()函数中
