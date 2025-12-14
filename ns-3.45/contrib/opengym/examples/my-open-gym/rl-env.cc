@@ -31,6 +31,21 @@ MyGymEnv::MyGymEnv(std::string prot)
   SetOpenGymInterface(OpenGymInterface::Get());
 }
 
+MyGymEnv::MyGymEnv (Time stepTime)
+{
+  NS_LOG_FUNCTION (this);
+  m_interval = stepTime;
+  Simulator::Schedule (Seconds(0.0), &MyGymEnv::ScheduleNextStateRead, this);
+}
+
+void
+MyGymEnv::ScheduleNextStateRead ()
+{
+  NS_LOG_FUNCTION (this);
+  Simulator::Schedule (m_timeStep, &MyGymEnv::ScheduleNextStateRead, this);
+  Notify();
+}
+
 MyGymEnv::~MyGymEnv ()
 {
   NS_LOG_FUNCTION (this);
@@ -47,6 +62,7 @@ MyGymEnv::GetActionSpace()
   NS_LOG_INFO ("MyGetActionSpace: " << box);
   return box;
 }
+
 
 bool
 MyGymEnv::GetGameOver()
@@ -89,23 +105,6 @@ MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
   return true;
 }
 
-MyGymEnv::MyGymEnv (std::string prot, Time timeStep) : MyGymEnv(prot)
-{
-  NS_LOG_FUNCTION (this);
-  m_timeStep = timeStep;
-  m_envReward = 0.0;
-  m_info = "no extra info";
-  m_isGameOver = false;
-}
-
-void
-MyGymEnv::ScheduleNextStateRead ()
-{
-  NS_LOG_FUNCTION (this);
-  Simulator::Schedule (m_timeStep, &MyGymEnv::ScheduleNextStateRead, this);
-  Notify();
-}
-
 /*
 Define observation space
 */
@@ -123,9 +122,7 @@ MyGymEnv::GetObservationSpace()
   return box;
 }
 
-/*
-Collect observations
-*/
+
 Ptr<OpenGymDataContainer>
 MyGymEnv::GetObservation()
 {
@@ -142,36 +139,37 @@ MyGymEnv::GetObservation()
   double m_average_delay = results.global.avgDelayMs;
   double m_packet_loss_ratio = results.global.lossRatePct;
 
-  //修改获取全部的链路利用率数据
+  //获取全部链路负载数据，并求方差
+  std::vector<double> arrUtil ;
+  for (size_t i = 0; i < results.links.size(); ++i) {
+      LinkTimeSeries linkData = results.links[i];
+      double link_load = linkData.utilSnapshots;
+      // 向arrUtil添加一条链路负载数据
+      arrUtil.push_back(link_load);
+  }
+  // 链路负载方差
+  double link_load_var = arrUtil.variance();
 
-  std::vector<int> targets = {10, 11, 12};
-  for (int idx : targets) {
-       if (idx < (int)results.links.size()) {
-  LinkTimeSeries myLinkData = results.links[idx];
-
+  // 队列长度
   // std::vector<double> arrQueueA = myLinkData.queueSnapshotsA;
   // std::vector<double> arrQueueB = myLinkData.queueSnapshotsB;
-  std::vector<double> arrUtil   = myLinkData.utilSnapshots;
-  double m_linkload = arrUtil.average();
   // double linkload_sum = std::accumulate(arrUtil.begin(), arrUtil.end(), 0.0);
-
 
   // 获取pfc触发次数
   // 创建一个qbb-net-device
   Ptr<QbbNetDevice> qbbDev = CreateObject<QbbNetDevice>();
+  NS_LOG_INFO("PFC_Counter: " << qbbDev->PrintAllPfcCounters());
   double m_pfc_trigger = qbbDev->PrintAllPfcCounters();
 
   //将类中的成员变量作为观测值返回
-  box->AddValue(m_linkload);          // 链路负载率
-  box->AddValue(m_pfc_trigger);        // PFC触发次数
-  box->AddValue(m_average_delay);      // 平均延迟
-  //box->AddValue(m_out_of_order_ratio);   // 乱序比例
-  box->AddValue(m_packet_loss_ratio);   // 丢包率
   box->AddValue(m_total_throughput);   // 总吞吐量
+  box->AddValue(m_average_delay);      // 平均延迟
+  box->AddValue(m_packet_loss_ratio);   // 丢包率
+  box->AddValue(m_pfc_trigger);        // PFC触发次数
+  box->AddValue(m_link_load_var);          // 链路负载率
   
   // Print data
   // NS_LOG_INFO ("MyGetObservation: " << box);
 
   return box;
-}
 } // namespace ns3

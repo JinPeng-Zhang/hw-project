@@ -334,14 +334,6 @@ std::vector<double> arrUtil   = myLinkData.utilSnapshots;
 
 将对应代码以函数形式封装到rl-env.cc，包装在GetObservation()函数中，返回一个OpenGymBoxContainer<double>对象。
 
-这样做是可行的吗?问题包括：
-1. PFC触发次数的获取需要一个qbbnetdevice实例
-2. 获取全部链路利用率数据
-3. simstatscollector实例
-4. 获取拓扑关于下一跳的信息表
-5. ECMP读写文件的接口？只看到了读
-
-
 ##  七、关于强化学习的设置
 
 ### 动作空间：

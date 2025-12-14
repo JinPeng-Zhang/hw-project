@@ -2,8 +2,8 @@
 #include "topo-traffic-builder.h"
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/point-to-point-net-device.h"
-#include "pfc/qbb-point-to-point-helper.h"
-#include "pfc/qbb-net-device.h"
+#include "ns3/qbb-point-to-point-helper.h"
+#include "ns3/qbb-net-device.h"
 
 #include <fstream>
 #include <sstream>

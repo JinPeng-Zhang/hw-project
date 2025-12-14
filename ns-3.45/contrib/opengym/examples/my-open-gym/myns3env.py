@@ -4,8 +4,8 @@ from ns3gym import ns3env
 from gym import spaces
 
 filepath =  "EcmpProbability.txt"
-obs_length = 1680*3+3  # 观测空间的维度，根据实际情况调整
-act_length =   # 动作空间的维度，根据实际情况调整
+obs_length =   # 观测空间的维度，根据实际情况调整
+act_length = 416*4  # 动作空间的维度，根据实际情况调整
 
 class MyNs3Env(ns3env.Ns3Env):
     def sample_simArgs(self):
@@ -44,7 +44,7 @@ class MyNs3Env(ns3env.Ns3Env):
         # PFC触发次数，统计
         pfc_triggers = obs[3]  
         # 链路负载计算方差
-        link_load_var = np.var(obs[4:])
+        link_load_var = obs[4]
         
         # 乱序率，重排序out_of_order_ratio = obs[] 
         # 收发队列长度queue_length = obs[]
