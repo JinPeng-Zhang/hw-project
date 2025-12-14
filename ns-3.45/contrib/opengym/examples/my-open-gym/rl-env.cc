@@ -54,8 +54,8 @@ MyGymEnv::~MyGymEnv ()
 Ptr<OpenGymSpace>
 MyGymEnv::GetActionSpace()
 {
-  uint32_t parameterNum = 2;
-  std::vector<uint32_t> shape = {parameterNum,};
+  uint32_t parameterNum = 416;
+  std::vector<uint32_t> shape = {parameterNum,4};
   std::string dtype = TypeNameGet<uint32_t> ();
 
   Ptr<OpenGymBoxSpace> box = CreateObject<OpenGymBoxSpace> (low, high, shape, dtype);
@@ -85,33 +85,13 @@ MyGymEnv::GetReward()
   return m_envReward;
 }
 
-std::string
-MyGymEnv::GetExtraInfo()
-{
-  NS_LOG_INFO("MyGetExtraInfo: " << m_info);
-  return m_info;
-}
-
-/*
-Execute received actions
-*/
-bool
-MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
-{
-  Ptr<OpenGymBoxContainer<uint32_t> > box = DynamicCast<OpenGymBoxContainer<uint32_t> >(action);
-  // 动作是每次调整所有节点的链路负载分配比例
-  m_ratio = box->GetValue();
-  NS_LOG_INFO ("MyExecuteActions: " << action);
-  return true;
-}
-
 /*
 Define observation space
 */
 Ptr<OpenGymSpace>
 MyGymEnv::GetObservationSpace()
 {
-  uint32_t parameterNum = 9;
+  uint32_t parameterNum = 5;
   //
   float low = 0.0;
   float high = 1000000000.0;
@@ -126,7 +106,7 @@ MyGymEnv::GetObservationSpace()
 Ptr<OpenGymDataContainer>
 MyGymEnv::GetObservation()
 {
-  uint32_t parameterNum = 9;
+  uint32_t parameterNum = 5;
   std::vector<uint32_t> shape = {parameterNum,};
 
   Ptr<OpenGymBoxContainer<double> > box = CreateObject<OpenGymBoxContainer<double> >(shape);
@@ -158,8 +138,8 @@ MyGymEnv::GetObservation()
   // 获取pfc触发次数
   // 创建一个qbb-net-device
   Ptr<QbbNetDevice> qbbDev = CreateObject<QbbNetDevice>();
-  NS_LOG_INFO("PFC_Counter: " << qbbDev->PrintAllPfcCounters());
-  double m_pfc_trigger = qbbDev->PrintAllPfcCounters();
+  NS_LOG_INFO("PFC_Counter: " << qbbDev->QbbNetDevice::PrintAllPfcCounters());
+  double m_pfc_trigger = qbbDev->QbbNetDevice::PrintAllPfcCounters();
 
   //将类中的成员变量作为观测值返回
   box->AddValue(m_total_throughput);   // 总吞吐量
@@ -168,8 +148,41 @@ MyGymEnv::GetObservation()
   box->AddValue(m_pfc_trigger);        // PFC触发次数
   box->AddValue(m_link_load_var);          // 链路负载率
   
+  m_envReward = 0;
   // Print data
   // NS_LOG_INFO ("MyGetObservation: " << box);
 
   return box;
+}
+
+float
+MyGymEnv::GetReward()
+{
+  NS_LOG_INFO("MyGetReward: " << m_envReward);
+  return m_envReward;
+}
+
+bool
+MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
+{
+  // action是一个416*4的矩阵，表示每个节点的ECMP概率分布,使用一个二维数组存储
+  Ptr<OpenGymBoxContainer<uint32_t> > box = DynamicCast<OpenGymBoxContainer<uint32_t> >(action);
+  std::vector<uint32_t> m_ratio;
+  for (uint32_t i = 0; i < box->GetSize(); ++i) {
+    for (uint32_t j = 0; j < box->GetSize(); ++j) {
+      m_ratio.push_back(box->GetValue()[i][j]);
+    }
+  }
+  // 将m_ratio写入文件EcmpCache.txt
+  std::ofstream outFile("EcmpCache.txt");
+  if (outFile.is_open()) {
+      for (size_t i = 0; i < m_ratio.size(); ++i) {
+          outFile << m_ratio[i] << std::endl;
+      }
+      outFile.close();
+  } else {
+      NS_LOG_ERROR("无法打开文件 EcmpCache.txt 进行写入！");
+  }
+  return true;
+}
 } // namespace ns3

@@ -3,8 +3,8 @@ import random
 from ns3gym import ns3env
 from gym import spaces
 
-filepath =  "EcmpProbability.txt"
-obs_length =   # 观测空间的维度，根据实际情况调整
+filepath =  "./ecmpCache.txt"
+obs_length =  5 # 观测空间的维度，根据实际情况调整
 act_length = 416*4  # 动作空间的维度，根据实际情况调整
 
 class MyNs3Env(ns3env.Ns3Env):
@@ -53,15 +53,21 @@ class MyNs3Env(ns3env.Ns3Env):
         return new_obs
 
 
+    # def transform_action(self, action):
+    #     # 读取ecmp概率文件，将“node: w1 w2 w3 ...”格式的内容转换为动作格式,即一个416*4的二维数组
+    #     with open(filepath, 'r') as file:
+    #         lines = file.readlines()
+    #     action = []
+    #     for line in lines:
+    #         node, weights = line.strip().split(':')
+    #         weights = [int(weight) for weight in weights.split()]
+    #         action.append(weights)
+    #     action = np.array(action).flatten()
+    #     return action
+
     def transform_action(self, action):
-        # 将动作写入文件ecmpprobability.txt
-        with open(filepath, 'w') as f:
-            f.write()
-            f.close()
-        # 重启ECMP相关的ns3模块以应用新的ECMP概率
-        
-        # new_action = [np.uint64(action * self.segment_size), np.uint64(0)]
-        return 0
+        new_action = action
+        return new_action
 
     def get_reward(self, obs ,eta, alpha ,beta ,gamma ,sigma ,delta, epsilon):
         # 吞吐量
@@ -73,8 +79,9 @@ class MyNs3Env(ns3env.Ns3Env):
         # PFC触发次数，统计
         pfc_triggers = obs[3]  
         # 链路负载计算方差
-        link_load_var = np.var(obs[4:])
-
+        link_load_var = obs[4]
+        # 定义所有参数的初始值为1
+        eta, alpha ,beta ,gamma ,sigma ,delta, epsilon = 1, 1, 1, 1, 1, 1, 1
         # 计算奖励函数
         reward = (eta * total_throughput - 
                   alpha * pfc_triggers - 

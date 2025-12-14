@@ -58,6 +58,8 @@ int main (int argc, char *argv[])
 // 文件路径
   std::string topoFile = "./auto.txt";
   std::string cdfFile = "./FbHdp_distribution.txt";
+  std::string ECMPfile = "./ecmpProbability.txt";
+  std::string ECMPCacheFile = "./ecmpCache.txt";
 // 仿真参数
   uint32_t flows = 100;
   std::string transport = "tcp";
