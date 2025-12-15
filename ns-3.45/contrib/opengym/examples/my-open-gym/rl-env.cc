@@ -128,7 +128,7 @@ MyGymEnv::GetObservation()
       arrUtil.push_back(link_load);
   }
   // 链路负载方差
-  double link_load_var = arrUtil.variance();
+  double m_link_load_var = arrUtil.variance();
 
   // 队列长度
   // std::vector<double> arrQueueA = myLinkData.queueSnapshotsA;

@@ -88,9 +88,6 @@ int main (int argc, char *argv[])
   cmd.AddValue ("load-rate", "负载率", loadRate);
   cmd.AddValue ("link-ref-mbps", "参考带宽", linkRefMbps);
   cmd.AddValue ("appsStop", "停止时间", appsStop);
-  cmd.AddValue("ecn", "启用 ECN (1/0)", ecnOn);
-  cmd.AddValue("redMinPkts", "RED MinTh (包)", redMinPkts);
-  cmd.AddValue("redMaxPkts", "RED MaxTh (包)", redMaxPkts);
   cmd.Parse (argc, argv);
 
   RngSeedManager::SetSeed(time(NULL));
@@ -101,7 +98,8 @@ int main (int argc, char *argv[])
   ConfigurePfc(pfcEnable, pfcHigh, pfcLow); 
 
 // 创建OpenGym环境
-  Ptr<OpenGymInterface> openGymInterface = OpenGymInterface::Get(openGymPort);
+//  Ptr<OpenGymInterface> openGymInterface = OpenGymInterface::Get(openGymPort);
+  Ptr<OpenGymInterface> openGymInterface = CreateObject<OpenGymInterface> (openGymPort);
   Ptr<MyGymEnv> myGymEnv = CreateObject<MyGymEnv> (Seconds(envTimeStep));
   myGymEnv->SetOpenGymInterface(openGymInterface);
 
