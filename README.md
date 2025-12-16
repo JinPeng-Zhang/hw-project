@@ -1,4 +1,15 @@
 # NS-3.45 项目仓库
+## GIT提交指南
+
+1. 创建自己的本地开发分支
+2. 更新本地的master，和origin同步
+3. 本地开发分支rebase master（发生冲突手动解决代码）
+4. 本地分支远端同步
+5. 本地master合并自己的开发分支
+6. 本地master提交
+
+## 代码功能合并（yky）
+
 hw project 11/29
 
 替换文件 ns3.45/src/internet/model/ipv4-global-routing.cc和ns3.45/src/point-to-point/model/point-to-point-net-device.cc
@@ -290,3 +301,5 @@ int main(int argc, char* argv[]) {
 
 禁用 PFC + perpacket ECMP
 ./your-program --pfc=0 --ecmp=perpacket
+
+```
