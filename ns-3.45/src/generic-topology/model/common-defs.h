@@ -6,6 +6,10 @@
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
 #include "ns3/applications-module.h"
+
+#include "ns3/qbb-point-to-point-helper.h"
+#include "ns3/qbb-net-device.h"
+
 #include <vector>
 #include <string>
 
@@ -17,8 +21,10 @@ namespace ns3 {
 struct LinkInfo {
     uint32_t nodeA;
     uint32_t nodeB;
-    Ptr<PointToPointNetDevice> devA;
-    Ptr<PointToPointNetDevice> devB;
+    Ptr<QbbNetDevice> devA;
+    Ptr<QbbNetDevice> devB;
+    // Ptr<PointToPointNetDevice> devA;
+    // Ptr<PointToPointNetDevice> devB;
     uint64_t dataRateBps;
 };
 

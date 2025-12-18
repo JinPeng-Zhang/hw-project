@@ -120,9 +120,11 @@ bool TopoTrafficBuilder::BuildAndInstall(std::string topoFilePath, std::string c
         // NetDeviceContainer ndc = p2p.Install(nc);
         NetDeviceContainer ndc = qbb.Install(nc);
         address.Assign(ndc); address.NewNetwork();
-
-        Ptr<PointToPointNetDevice> d0 = DynamicCast<PointToPointNetDevice>(ndc.Get(0));
-        Ptr<PointToPointNetDevice> d1 = DynamicCast<PointToPointNetDevice>(ndc.Get(1));
+        
+        Ptr<QbbNetDevice> d0 = DynamicCast<QbbNetDevice>(ndc.Get(0));
+        Ptr<QbbNetDevice> d1 = DynamicCast<QbbNetDevice>(ndc.Get(1));
+        // Ptr<PointToPointNetDevice> d0 = DynamicCast<PointToPointNetDevice>(ndc.Get(0));
+        // Ptr<PointToPointNetDevice> d1 = DynamicCast<PointToPointNetDevice>(ndc.Get(1));
         if (d0 && d1) {
             DataRateValue drv; d0->GetAttribute("DataRate", drv);
             m_links.push_back({(uint32_t)n1, (uint32_t)n2, d0, d1, drv.Get().GetBitRate()});
