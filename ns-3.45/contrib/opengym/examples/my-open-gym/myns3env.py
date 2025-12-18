@@ -5,7 +5,7 @@ from gym import spaces
 
 filepath =  "./ecmpCache.txt"
 obs_length =  5 # 观测空间的维度，根据实际情况调整
-act_length = 416  # 动作空间的维度，根据实际情况调整
+act_length = (464,4)  # 动作空间的维度，根据实际情况调整
 
 class MyNs3Env(ns3env.Ns3Env):
     def sample_simArgs(self):
@@ -29,7 +29,7 @@ class MyNs3Env(ns3env.Ns3Env):
         print("Observation space:", self.observation_space)
 
         # Redefine action space
-        self.action_space = spaces.Box(0, 1, (act_length,), np.uint64)
+        self.action_space = spaces.Box(0, 1, (act_length), np.uint64)
         # self.action_space = spaces.Discrete(1000, start=1)
         print("Action space:", self.action_space)
 
@@ -68,10 +68,10 @@ class MyNs3Env(ns3env.Ns3Env):
     def transform_action(self, action):
         # 将actio写入ecmp概率文件，将“node: w1 w2 w3 ...”格式的内容转换为动作格式,即一个416*4的二维数组
         with open(filepath, 'w') as file:
-            for i in range(416):
+            for i in range(act_length[0]):
                 weights = action[i*4:(i+1)*4]
                 weights_str = ' '.join(map(str, weights))
-                file.write(f'node{i+1}: {weights_str}\n')
+                file.write(f'{i+1}: {weights_str}\n')
         new_action = action
         return new_action
 

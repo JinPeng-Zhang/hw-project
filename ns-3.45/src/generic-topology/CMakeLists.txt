@@ -14,6 +14,7 @@ build_lib(
         ${libpoint-to-point}
         ${libapplications}
         ${libflow-monitor}
+        ${libpfc}
     TEST_SOURCES
         test/generic-topology-test-suite.cc
 )
