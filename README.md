@@ -429,23 +429,50 @@ pip3 install ./model/ns3gym
 
 项目编译和运行
 
-此处需要改动我们的项目名称my-open-gym为opengym
 
+先编译ns3.45
 Configure and build ns-3 project:
 ```
-cd ../../
-./ns3 configure --enable-examples
+cd ns-3.45
+./ns3 configure --enable-examples --enable-tests
 ./ns3 build
 ```
+
+在对应目录放入opengym对应内容，以及下载ns3gym依赖
+```
+cd ./contrib/opengym/
+pip3 install --user ./model/ns3gym
+```
+
+返回ns3.45重新编译
+```
+cd ../../
+./ns3 configure enable-examples
+./ns3 build
+```
+
+可能提示protobuf相关的问题，需要重新生成message.proto对应的.pb.c与.pb.h文件，以及对应的python文件，都在message.proto所在的目录下
 Note: Opengym Protocol Buffer messages (C++ and Python) are build during configure.
 
-Run a project:
+运行项目
+在ns3.41的目录下运行terminal 1
+在opengym下运行terminal 2
 
+terminal
+```
+cd ns-3.45/
+./ns3 run "opengym"
+```
+
+terminal
+```
+cd ./contrib/opengym/examples/opengym/
+python train.py
+```
+
+
+conda环境依赖：
 ```
 conda env create -f env.yml
-conda activate LoadBalancingRL_env
-```
-```
-cd ./contrib/opengym/examples/opengym/ 
-python train.py
+conda activate MyRLEnv
 ```

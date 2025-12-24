@@ -1,182 +1,125 @@
-/* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
-/*
- * Copyright (c) 2018 Piotr Gawlowicz
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation;
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * Author: Piotr Gawlowicz <gawlowicz.p@gmail.com>
- *
- */
-
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #include "ns3/core-module.h"
+#include "ns3/topo-traffic-builder.h"
+#include "ns3/sim-stats-collector.h"
+
+#include "ns3/qbb-point-to-point-helper.h"
+#include "ns3/qbb-net-device.h"
+
+#include "rl-env.h"
 #include "ns3/opengym-module.h"
+#include <iostream>
+#include <vector>
+#include <iomanip>
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE ("OpenGym");
-
-/*
-Define observation space
-*/
-Ptr<OpenGymSpace> MyGetObservationSpace(void)
-{
-  uint32_t nodeNum = 5;
-  float low = 0.0;
-  float high = 10.0;
-  std::vector<uint32_t> shape = {nodeNum,};
-  std::string dtype = TypeNameGet<uint32_t> ();
-  Ptr<OpenGymBoxSpace> space = CreateObject<OpenGymBoxSpace> (low, high, shape, dtype);
-  NS_LOG_UNCOND ("MyGetObservationSpace: " << space);
-  return space;
+void ConfigurePfc(bool enable, uint32_t high, uint32_t low) {
+  Config::Set("/NodeList/*/DeviceList/*/$ns3::QbbNetDevice/PfcEnable", 
+              BooleanValue(enable));
+  Config::Set("/NodeList/*/DeviceList/*/$ns3::QbbNetDevice/PfcHighPkts", 
+              UintegerValue(high));
+  Config::Set("/NodeList/*/DeviceList/*/$ns3::QbbNetDevice/PfcLowPkts", 
+              UintegerValue(low));
 }
 
-/*
-Define action space
-*/
-Ptr<OpenGymSpace> MyGetActionSpace(void)
-{
-  uint32_t nodeNum = 5;
 
-  Ptr<OpenGymDiscreteSpace> space = CreateObject<OpenGymDiscreteSpace> (nodeNum);
-  NS_LOG_UNCOND ("MyGetActionSpace: " << space);
-  return space;
-}
+void ConfigureEcmp(const std::string& mode) {
+  bool perflow = (mode == "perflow");
+  std::string base = "/NodeList/*/$ns3::Ipv4L3Protocol/"
+                     "$ns3::Ipv4ListRouting/$ns3::Ipv4GlobalRouting/";
+  Config::Set(base + "PerflowEcmpRouting", BooleanValue(perflow));
+  Config::Set(base + "RandomEcmpRouting", BooleanValue(!perflow));
 
-/*
-Define game over condition
-*/
-bool MyGetGameOver(void)
-{
+  // 强制运行时生效
+  for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i) {
+    Ptr<Node> node = NodeList::GetNode(i);
+    Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
+    if (!ipv4) continue;
+    
+    Ptr<Ipv4ListRouting> list = 
+        DynamicCast<Ipv4ListRouting>(ipv4->GetRoutingProtocol());
+    if (!list) continue;
 
-  bool isGameOver = false;
-  bool test = false;
-  static float stepCounter = 0.0;
-  stepCounter += 1;
-  if (stepCounter == 10 && test) {
-      isGameOver = true;
+    for (uint32_t k = 0; k < list->GetNRoutingProtocols(); ++k) {
+      int16_t prio;
+      Ptr<Ipv4GlobalRouting> gr = 
+          DynamicCast<Ipv4GlobalRouting>(list->GetRoutingProtocol(k, prio));
+      if (gr) {
+        gr->SetAttribute("PerflowEcmpRouting", BooleanValue(perflow));
+        gr->SetAttribute("RandomEcmpRouting", BooleanValue(!perflow));
+      }
+    }
   }
-  NS_LOG_UNCOND ("MyGetGameOver: " << isGameOver);
-  return isGameOver;
 }
 
-/*
-Collect observations
-*/
-Ptr<OpenGymDataContainer> MyGetObservation(void)
+int main (int argc, char *argv[])
 {
-  uint32_t nodeNum = 5;
-  uint32_t low = 0.0;
-  uint32_t high = 10.0;
-  Ptr<UniformRandomVariable> rngInt = CreateObject<UniformRandomVariable> ();
-
-  std::vector<uint32_t> shape = {nodeNum,};
-  Ptr<OpenGymBoxContainer<uint32_t> > box = CreateObject<OpenGymBoxContainer<uint32_t> >(shape);
-
-  // generate random data
-  for (uint32_t i = 0; i<nodeNum; i++){
-    uint32_t value = rngInt->GetInteger(low, high);
-    box->AddValue(value);
-  }
-
-  NS_LOG_UNCOND ("MyGetObservation: " << box);
-  return box;
-}
-
-/*
-Define reward function
-*/
-float MyGetReward(void)
-{
-  static float reward = 0.0;
-  reward += 1;
-  return reward;
-}
-
-/*
-Define extra info. Optional
-*/
-std::string MyGetExtraInfo(void)
-{
-  std::string myInfo = "testInfo";
-  myInfo += "|123";
-  NS_LOG_UNCOND("MyGetExtraInfo: " << myInfo);
-  return myInfo;
-}
-
-
-/*
-Execute received actions
-*/
-bool MyExecuteActions(Ptr<OpenGymDataContainer> action)
-{
-  Ptr<OpenGymDiscreteContainer> discrete = DynamicCast<OpenGymDiscreteContainer>(action);
-  NS_LOG_UNCOND ("MyExecuteActions: " << action);
-  return true;
-}
-
-void ScheduleNextStateRead(double envStepTime, Ptr<OpenGymInterface> openGym)
-{
-  Simulator::Schedule (Seconds(envStepTime), &ScheduleNextStateRead, envStepTime, openGym);
-  openGym->NotifyCurrentState();
-}
-
-int
-main (int argc, char *argv[])
-{
-  // Parameters of the scenario
-  uint32_t simSeed = 1;
-  double simulationTime = 1; //seconds
-  double envStepTime = 0.1; //seconds, ns3gym env step time interval
+// 文件路径
+  std::string topoFile = "./auto.txt";
+  std::string cdfFile = "./FbHdp_distribution.txt";
+  std::string ECMPfile = "./ecmpProbability.txt";
+  std::string ECMPCacheFile = "./ecmpCache.txt";
+// 仿真参数
+  uint32_t flows = 100;
+  std::string transport = "tcp";
+  double loadRate = 0.3;
+  double linkRefMbps = 10.0;
+  double appsStop = 30.0;
+// PFC与ECMP参数
+  bool pfcEnable = true;
+  uint32_t pfcHigh = 8;
+  uint32_t pfcLow = 4;
+  std::string ecmpMode = "perflow";
+//opengym环境
   uint32_t openGymPort = 5555;
-  uint32_t testArg = 0;
+  double envTimeStep = 1;
 
+// 命令行解析
   CommandLine cmd;
-  // required parameters for OpenGym interface
   cmd.AddValue ("openGymPort", "Port number for OpenGym env. Default: 5555", openGymPort);
-  cmd.AddValue ("simSeed", "Seed for random generator. Default: 1", simSeed);
-  // optional parameters
-  cmd.AddValue ("simTime", "Simulation time in seconds. Default: 10s", simulationTime);
-  cmd.AddValue ("testArg", "Extra simulation argument. Default: 0", testArg);
+  cmd.AddValue ("envTimeStep", "Time step interval for time-based TCP env [s]. Default: 0.1s", envTimeStep);
+  cmd.AddValue("ecmp", "ECMP mode: perflow|perpacket", ecmpMode);
+  cmd.AddValue("pfc", "Enable PFC", pfcEnable);
+  cmd.AddValue("pfcHigh", "PFC high threshold (pkts)", pfcHigh);
+  cmd.AddValue("pfcLow", "PFC low threshold (pkts)", pfcLow);
+  cmd.AddValue ("flows", "流数量", flows);
+  cmd.AddValue ("transport", "tcp/udp", transport);
+  cmd.AddValue ("load-rate", "负载率", loadRate);
+  cmd.AddValue ("link-ref-mbps", "参考带宽", linkRefMbps);
+  cmd.AddValue ("appsStop", "停止时间", appsStop);
   cmd.Parse (argc, argv);
 
-  NS_LOG_UNCOND("Ns3Env parameters:");
-  NS_LOG_UNCOND("--simulationTime: " << simulationTime);
-  NS_LOG_UNCOND("--openGymPort: " << openGymPort);
-  NS_LOG_UNCOND("--envStepTime: " << envStepTime);
-  NS_LOG_UNCOND("--seed: " << simSeed);
-  NS_LOG_UNCOND("--testArg: " << testArg);
+  RngSeedManager::SetSeed(time(NULL));
+  RngSeedManager::SetRun(1);
 
-  RngSeedManager::SetSeed (1);
-  RngSeedManager::SetRun (simSeed);
+//PFC与ECMP配置
+  ConfigureEcmp(ecmpMode);
+  ConfigurePfc(pfcEnable, pfcHigh, pfcLow); 
 
-  // OpenGym Env
-  Ptr<OpenGymInterface> openGym = CreateObject<OpenGymInterface> (openGymPort);
-  openGym->SetGetActionSpaceCb( MakeCallback (&MyGetActionSpace) );
-  openGym->SetGetObservationSpaceCb( MakeCallback (&MyGetObservationSpace) );
-  openGym->SetGetGameOverCb( MakeCallback (&MyGetGameOver) );
-  openGym->SetGetObservationCb( MakeCallback (&MyGetObservation) );
-  openGym->SetGetRewardCb( MakeCallback (&MyGetReward) );
-  openGym->SetGetExtraInfoCb( MakeCallback (&MyGetExtraInfo) );
-  openGym->SetExecuteActionsCb( MakeCallback (&MyExecuteActions) );
-  Simulator::Schedule (Seconds(0.0), &ScheduleNextStateRead, envStepTime, openGym);
+// 创建OpenGym环境
+//  Ptr<OpenGymInterface> openGymInterface = OpenGymInterface::Get(openGymPort);
+  Ptr<OpenGymInterface> openGymInterface = CreateObject<OpenGymInterface> (openGymPort);
+  Ptr<MyGymEnv> myGymEnv = CreateObject<MyGymEnv> (Seconds(envTimeStep));
+  myGymEnv->SetOpenGymInterface(openGymInterface);
 
-  NS_LOG_UNCOND ("Simulation start");
-  Simulator::Stop (Seconds (simulationTime));
-  Simulator::Run ();
-  NS_LOG_UNCOND ("Simulation stop");
+// 拓扑环境搭建
+  TopoTrafficBuilder builder;
+  if (!builder.BuildAndInstall(topoFile, cdfFile, flows, transport, loadRate, linkRefMbps, appsStop)) {
+      std::cerr << "环境搭建失败！" << std::endl;
+      return 1;
+  }
+  std::cout << "拓扑构建完成。" << std::endl;
 
-  openGym->NotifySimulationEnd();
-  Simulator::Destroy ();
+// 仿真运行
+  std::cout << "开始仿真..." << std::endl;
+  Simulator::Stop(Seconds(appsStop + 1.0));
+  Simulator::Run();
 
+  Simulator::Destroy();
+  std::cout << "仿真结束。" << std::endl;
+
+  openGymInterface->NotifySimulationEnd();
+
+  return 0;
 }
