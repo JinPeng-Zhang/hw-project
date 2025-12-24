@@ -3,7 +3,7 @@ import random
 from ns3gym import ns3env
 from gym import spaces
 
-filepath =  "./ecmpCache.txt"
+filepath =  "./ecmpProbability.txt"
 obs_length =  5 # 观测空间的维度，根据实际情况调整
 act_length = 464  # 动作空间的维度，根据实际情况调整
 
