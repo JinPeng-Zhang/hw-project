@@ -26,6 +26,18 @@ lru：缓存路径数量超过该值则缓存的全部路径过期
 
 修改时间点的方法：ns3.45/src/internet/model/ipv4-global-routing.cc里面设置
 
+// 绝对超时：流最多存活时间（防止老流使用过期权重）
+
+static const uint64_t ABSOLUTE_TIMEOUT = 4ULL * 1000000000ULL;  // 600秒 = 10分钟（纳秒）
+
+// 空闲超时：最后一个包后的等待时间（检测流结束）
+
+static const uint64_t IDLE_TIMEOUT = 2ULL * 1000000000ULL;       // 60秒（纳秒）
+
+// LRU 容量上限
+
+static const size_t MAX_FLOW_CACHE_SIZE = 100000;  // 10万条流
+
 一、PFC 功能集成指南
 
 1.1 替换链路创建方式
