@@ -16,6 +16,16 @@ hw project 11/29
 
 ecmp使用方法：ecmpProbability.txt是权重修改文件，ecmpProbabilityConfig.txt是权重初始化文件
 
+ecmp更新，新流老流问题解决方案：新流用当前权重选择的路径，老流用流开始时使用的路径，也就是已缓存的旧路径，更换时间点：
+
+lru：缓存路径数量超过该值则缓存的全部路径过期
+
+绝对时间：流运行的时间超过该值则过期
+
+空闲时间：流空闲的时间超过该值则过期
+
+修改时间点的方法：ns3.45/src/internet/model/ipv4-global-routing.cc里面设置
+
 一、PFC 功能集成指南
 
 1.1 替换链路创建方式
