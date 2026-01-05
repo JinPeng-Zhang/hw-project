@@ -1,6 +1,5 @@
 //
 // Copyright (c) 2008 University of Washington
-//
 // SPDX-License-Identifier: GPL-2.0-only
 //
 
@@ -24,8 +23,8 @@
 
 #include <iomanip>
 #include <vector>
-
 #include <map>
+#include <set>
 #include <fstream>
 #include <sstream>
 #include <limits>
@@ -33,9 +32,14 @@
 #include <cerrno>
 #include <string>
 #include <cstdint>
-// 修复：find_if / isspace 需要的头文件
 #include <algorithm>
 #include <cctype>
+#include <list>
+#include <unordered_map>
+
+// 文件监控需要的头文件
+#include <sys/stat.h>
+#include <ctime>
 
 namespace ns3
 {
@@ -44,18 +48,107 @@ NS_LOG_COMPONENT_DEFINE("Ipv4GlobalRouting");
 
 NS_OBJECT_ENSURE_REGISTERED(Ipv4GlobalRouting);
 
-// 匿名命名空间: ECMP 权重（按节点，来自单一文件）、节点重盐与哈希工具
+// 匿名命名空间: ECMP 权重、文件监控、流缓存
 namespace
 {
+// ==================== 原有的权重管理 ====================
 // (nodeId, N备选数) -> 该节点此N下的权重前缀（缓存）
 static std::map<std::pair<uint32_t, size_t>, std::vector<uint32_t>> g_ecmpWeightCacheByNodeN;
 
-// 节点原始权重表：nodeId -> 一串权重（读取整行，运行时按前缀取 N 个）
+// 节点原始权重表：nodeId -> 一串权重
 static std::map<uint32_t, std::vector<uint32_t>> g_nodeRawWeights;
 static bool g_weightsLoaded = false;
 
-// 64-bit FNV-1a 常量
-static constexpr uint64_t FNV64_OFFSET = 1469598103934665603ull;
+// 文件监控相关 - 使用纳秒级时间戳
+static uint64_t g_lastFileModTimeNano = 0;
+static bool g_enableAutoReload = true;  // 默认启用自动重载
+static uint32_t g_weightVersion = 0;    // 权重配置版本号（仅用于日志）
+
+// ==================== 新增：流缓存配置 ====================
+// 绝对超时：流最多存活时间（防止老流使用过期权重）
+static const uint64_t ABSOLUTE_TIMEOUT = 4ULL * 1000000000ULL;  // 600秒 = 10分钟（纳秒）
+
+// 空闲超时：最后一个包后的等待时间（检测流结束）
+static const uint64_t IDLE_TIMEOUT = 2ULL * 1000000000ULL;       // 60秒（纳秒）
+
+// LRU 容量上限
+static const size_t MAX_FLOW_CACHE_SIZE = 100000;  // 10万条流
+
+// 统计计数器
+static uint64_t g_cacheLookupCount = 0;     // 查询次数
+static uint64_t g_cacheHitCount = 0;        // 命中次数
+static uint64_t g_cacheExpiredCount = 0;    // 过期淘汰次数
+static uint64_t g_cacheLRUEvictCount = 0;   // LRU淘汰次数
+
+// 打印保护：确保统计信息只打印一次
+static bool g_statsPrinted = false;
+
+// ==================== 流标识（五元组）====================
+struct FlowKey
+{
+    uint32_t srcIP;
+    uint32_t dstIP;
+    uint16_t srcPort;
+    uint16_t dstPort;
+    uint8_t protocol;
+
+    FlowKey(uint32_t sip, uint32_t dip, uint16_t sp, uint16_t dp, uint8_t proto)
+        : srcIP(sip), dstIP(dip), srcPort(sp), dstPort(dp), protocol(proto)
+    {}
+
+    bool operator==(const FlowKey& other) const
+    {
+        return srcIP == other.srcIP &&
+               dstIP == other.dstIP &&
+               srcPort == other.srcPort &&
+               dstPort == other.dstPort &&
+               protocol == other.protocol;
+    }
+};
+
+// FlowKey 的哈希函数
+struct FlowKeyHash
+{
+    std::size_t operator()(const FlowKey& key) const
+    {
+        // 使用 FNV-1a 哈希
+        std::size_t h = 14695981039346656037ULL;
+        h ^= key.srcIP; h *= 1099511628211ULL;
+        h ^= key.dstIP; h *= 1099511628211ULL;
+        h ^= key.srcPort; h *= 1099511628211ULL;
+        h ^= key.dstPort; h *= 1099511628211ULL;
+        h ^= key.protocol; h *= 1099511628211ULL;
+        return h;
+    }
+};
+
+// ==================== 缓存条目 ====================
+struct FlowCacheEntry
+{
+    uint32_t selectedIndex;      // 选中的路径索引
+    uint64_t createTime;         // 创建时间（纳秒）
+    uint64_t lastAccessTime;     // 最后访问时间（纳秒）
+    uint32_t weightVersion;      // 权重版本号
+    uint64_t packetCount;        // 包计数（统计用）
+
+    FlowCacheEntry()
+        : selectedIndex(0), createTime(0), lastAccessTime(0), 
+          weightVersion(0), packetCount(0)
+    {}
+};
+
+// ==================== 流缓存数据结构 ====================
+// 主存储：FlowKey -> FlowCacheEntry
+static std::unordered_map<FlowKey, FlowCacheEntry, FlowKeyHash> g_flowCache;
+
+// LRU 链表：头部=最新访问，尾部=最旧访问
+static std::list<FlowKey> g_lruList;
+
+// 辅助索引：FlowKey -> LRU链表中的迭代器
+static std::unordered_map<FlowKey, std::list<FlowKey>::iterator, FlowKeyHash> g_lruIterMap;
+
+// ==================== 64-bit FNV-1a 常量（用于路径哈希）====================
+static constexpr uint64_t FNV64_OFFSET = 14695981039346656037ull;
 static constexpr uint64_t FNV64_PRIME  = 1099511628211ull;
 
 static inline void Fnv64MixByte(uint64_t& h, uint8_t b)
@@ -98,7 +191,7 @@ static inline uint32_t Avalanche64To32(uint64_t x)
     return static_cast<uint32_t>(x ^ (x >> 32));
 }
 
-// 节点重盐：NodeId + 所有 IPv4 接口信息（64-bit FNV-1a），跨节点差异大
+// 节点重盐
 static uint64_t
 GetNodeHeavySalt(Ptr<Ipv4> ipv4)
 {
@@ -137,34 +230,59 @@ StripCommentAndTrim(const std::string& line)
     std::string s = line;
     auto pos = s.find('#');
     if (pos != std::string::npos) s = s.substr(0, pos);
-    // trim 左右空白（安全类型）
     auto notspace = [](char ch){ return !std::isspace(static_cast<unsigned char>(ch)); };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
     s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
     return s;
 }
 
-// 仅从当前工作目录读取 ecmpProbability.txt，加载所有节点权重
-// 文件格式（每行一个节点）：
-//   nodeId: w1 w2 w3 ...
-// 或 nodeId w1 w2 w3 ...
-// 若多次定义同一 nodeId，后者覆盖前者
-static bool
-LoadAllNodeWeightsFile()
+// 获取文件修改时间（纳秒级精度）
+#ifdef __APPLE__
+static uint64_t GetFileModTimeNano(const std::string& filename)
 {
-    if (g_weightsLoaded) return !g_nodeRawWeights.empty();
+    struct stat fileStat;
+    if (stat(filename.c_str(), &fileStat) == 0) {
+        return static_cast<uint64_t>(fileStat.st_mtimespec.tv_sec) * 1000000000ULL 
+             + static_cast<uint64_t>(fileStat.st_mtimespec.tv_nsec);
+    }
+    return 0;
+}
+#elif defined(__linux__)
+static uint64_t GetFileModTimeNano(const std::string& filename)
+{
+    struct stat fileStat;
+    if (stat(filename.c_str(), &fileStat) == 0) {
+        return static_cast<uint64_t>(fileStat.st_mtim.tv_sec) * 1000000000ULL 
+             + static_cast<uint64_t>(fileStat.st_mtim.tv_nsec);
+    }
+    return 0;
+}
+#else
+// 其他系统回退到秒级精度
+static uint64_t GetFileModTimeNano(const std::string& filename)
+{
+    struct stat fileStat;
+    if (stat(filename.c_str(), &fileStat) == 0) {
+        return static_cast<uint64_t>(fileStat.st_mtime) * 1000000000ULL;
+    }
+    return 0;
+}
+#endif
 
-    std::ifstream fin("ecmpProbability.txt");
+// 从指定文件加载权重（返回加载的节点ID集合）
+static std::set<uint32_t>
+LoadWeightsFromFile(const std::string& filename)
+{
+    std::set<uint32_t> loadedNodes;
+    std::ifstream fin(filename);
     if (!fin.good())
     {
-        NS_LOG_WARN("ECMP 权重文件无法打开: ecmpProbability.txt");
-        g_weightsLoaded = true;
-        return false;
+        NS_LOG_WARN("无法打开权重文件: " << filename);
+        return loadedNodes;
     }
 
     std::string line;
     uint32_t lineNo = 0;
-    uint32_t okCnt = 0;
     while (std::getline(fin, line))
     {
         ++lineNo;
@@ -186,7 +304,7 @@ LoadAllNodeWeightsFile()
         unsigned long nid64 = std::strtoul(key.c_str(), &endp, 10);
         if (errno != 0 || endp == key.c_str())
         {
-            NS_LOG_WARN("ecmpProbability.txt 第 " << lineNo << " 行节点号解析失败: " << key);
+            NS_LOG_WARN(filename << " 第 " << lineNo << " 行节点号解析失败: " << key);
             continue;
         }
         uint32_t nodeId = static_cast<uint32_t>(nid64);
@@ -201,12 +319,12 @@ LoadAllNodeWeightsFile()
             unsigned long long val = std::strtoull(tok.c_str(), &ep, 10);
             if (errno != 0 || ep == tok.c_str())
             {
-                NS_LOG_WARN("ecmpProbability.txt 第 " << lineNo << " 行存在无法解析的权重: " << tok);
+                NS_LOG_WARN(filename << " 第 " << lineNo << " 行存在无法解析的权重: " << tok);
                 continue;
             }
             if (val > std::numeric_limits<uint32_t>::max())
             {
-                NS_LOG_WARN("ecmpProbability.txt 第 " << lineNo << " 行权重过大, 截断: " << val);
+                NS_LOG_WARN(filename << " 第 " << lineNo << " 行权重过大, 截断: " << val);
                 val = std::numeric_limits<uint32_t>::max();
             }
             w.push_back(static_cast<uint32_t>(val));
@@ -214,25 +332,103 @@ LoadAllNodeWeightsFile()
 
         if (w.empty())
         {
-            NS_LOG_WARN("ecmpProbability.txt 第 " << lineNo << " 行无有效权重");
+            NS_LOG_WARN(filename << " 第 " << lineNo << " 行无有效权重");
             continue;
         }
 
+        // 更新到全局权重表
         g_nodeRawWeights[nodeId] = std::move(w);
-        ++okCnt;
+        loadedNodes.insert(nodeId);
     }
 
-    g_weightsLoaded = true;
-    if (okCnt == 0)
+    return loadedNodes;
+}
+
+// 初始化：从 Config 文件加载所有节点权重
+static bool
+LoadAllNodeWeightsFile()
+{
+    const std::string configFile = "ecmpProbabilityConfig.txt";
+    
+    // 清空旧数据
+    g_nodeRawWeights.clear();
+    g_ecmpWeightCacheByNodeN.clear();
+
+    auto nodes = LoadWeightsFromFile(configFile);
+    
+    if (nodes.empty())
     {
-        NS_LOG_WARN("ecmpProbability.txt 中未加载到任何节点权重");
+        NS_LOG_WARN("初始配置文件 " << configFile << " 中未加载到任何节点权重");
         return false;
     }
-    NS_LOG_INFO("已加载节点权重条目数: " << okCnt << " 来自 ecmpProbability.txt");
+
+    // 记录运行时文件的初始修改时间
+    g_lastFileModTimeNano = GetFileModTimeNano("ecmpProbability.txt");
+
+    NS_LOG_INFO("已从 " << configFile << " 加载 " << nodes.size() 
+                << " 个节点的权重配置 (version=" << g_weightVersion << ")");
     return true;
 }
 
-// 获取某节点在候选数 N 下的权重前缀；失败返回 false（回退等权）
+// 热重载：从 ecmpProbability.txt 增量更新（保守策略：不清空流缓存）
+static void CheckAndReloadWeightsFile()
+{
+    if (!g_enableAutoReload) return;
+    
+    const std::string runtimeFile = "ecmpProbability.txt";
+    uint64_t currentModTime = GetFileModTimeNano(runtimeFile);
+    
+    // 文件修改时间变化（纳秒级比较）
+    if (currentModTime > 0 && currentModTime != g_lastFileModTimeNano)
+    {
+        NS_LOG_INFO("检测到 " << runtimeFile << " 变化，增量更新中...");
+        
+        // 清空权重缓存但保留基础权重表
+        g_ecmpWeightCacheByNodeN.clear();
+        g_weightVersion++;
+        
+        // 增量加载：只更新 ecmpProbability.txt 中的节点
+        auto updatedNodes = LoadWeightsFromFile(runtimeFile);
+        
+        g_lastFileModTimeNano = currentModTime;
+        
+        // 保守策略：不清空流缓存，让老流继续使用旧路径直到过期
+        // 如需激进策略（立即重选所有流），取消下面三行注释：
+        // g_flowCache.clear();
+        // g_lruList.clear();
+        // g_lruIterMap.clear();
+        
+        std::cout << "[" << Simulator::Now().GetSeconds() 
+                  << "s] 增量更新权重: 修改了 " << updatedNodes.size() 
+                  << " 个节点 (version=" << g_weightVersion 
+                  << ", 流缓存保留策略=保守)" << std::endl;
+        
+        // 打印更新的节点
+        if (!updatedNodes.empty())
+        {
+            std::cout << "  更新的节点: ";
+            for (uint32_t nid : updatedNodes)
+            {
+                std::cout << nid << " ";
+                if (g_nodeRawWeights.count(nid))
+                {
+                    std::cout << "(";
+                    const auto& weights = g_nodeRawWeights[nid];
+                    for (size_t i = 0; i < std::min(size_t(4), weights.size()); ++i)
+                    {
+                        if (i > 0) std::cout << ":";
+                        std::cout << weights[i];
+                    }
+                    if (weights.size() > 4) std::cout << "...";
+                    std::cout << ") ";
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+}
+
+// 获取某节点在候选数 N 下的权重前缀
 static bool
 GetNodeWeights(uint32_t nodeId, size_t n, std::vector<uint32_t>& out)
 {
@@ -247,12 +443,12 @@ GetNodeWeights(uint32_t nodeId, size_t n, std::vector<uint32_t>& out)
     if (!g_weightsLoaded)
     {
         LoadAllNodeWeightsFile();
+        g_weightsLoaded = true;
     }
 
     auto itRaw = g_nodeRawWeights.find(nodeId);
     if (itRaw == g_nodeRawWeights.end())
     {
-        // 未配置该节点
         return false;
     }
     const auto& raw = itRaw->second;
@@ -274,6 +470,212 @@ GetNodeWeights(uint32_t nodeId, size_t n, std::vector<uint32_t>& out)
     g_ecmpWeightCacheByNodeN.emplace(key, w);
     out = std::move(w);
     return true;
+}
+
+// ==================== 新增：流缓存管理函数 ====================
+
+// 判断缓存条目是否过期
+static bool IsFlowExpired(const FlowCacheEntry& entry, uint64_t currentTime)
+{
+    // 绝对超时：从创建开始超过 ABSOLUTE_TIMEOUT
+    if (currentTime > entry.createTime && 
+        (currentTime - entry.createTime) > ABSOLUTE_TIMEOUT)
+    {
+        return true;
+    }
+    
+    // 空闲超时：从最后访问超过 IDLE_TIMEOUT
+    if (currentTime > entry.lastAccessTime && 
+        (currentTime - entry.lastAccessTime) > IDLE_TIMEOUT)
+    {
+        return true;
+    }
+    
+    return false;
+}
+
+// 从缓存中移除流（同时删除 HashMap 和 LRU 链表）
+static void RemoveFlowFromCache(const FlowKey& key)
+{
+    auto itCache = g_flowCache.find(key);
+    if (itCache == g_flowCache.end())
+    {
+        return;  // 不存在，无需删除
+    }
+    
+    // 从 LRU 链表中移除
+    auto itLRU = g_lruIterMap.find(key);
+    if (itLRU != g_lruIterMap.end())
+    {
+        g_lruList.erase(itLRU->second);
+        g_lruIterMap.erase(itLRU);
+    }
+    
+    // 从 HashMap 中移除
+    g_flowCache.erase(itCache);
+}
+
+// LRU 淘汰：移除链表尾部（最旧）的流
+static void EvictLRU()
+{
+    if (g_lruList.empty())
+    {
+        return;
+    }
+    
+    // 获取尾部（最旧）的流
+    FlowKey oldestKey = g_lruList.back();
+    
+    // 从链表移除
+    g_lruList.pop_back();
+    
+    // 从辅助索引移除
+    g_lruIterMap.erase(oldestKey);
+    
+    // 从 HashMap 移除
+    g_flowCache.erase(oldestKey);
+    
+    g_cacheLRUEvictCount++;
+    
+    NS_LOG_DEBUG("LRU淘汰流: 缓存大小=" << g_flowCache.size() 
+                 << " LRU淘汰总数=" << g_cacheLRUEvictCount);
+}
+
+// 移动流到 LRU 链表头部（最新）
+static void MoveToLRUHead(const FlowKey& key)
+{
+    auto itLRU = g_lruIterMap.find(key);
+    if (itLRU == g_lruIterMap.end())
+    {
+        // 不应该发生：缓存中存在但 LRU 链表中不存在
+        NS_LOG_ERROR("MoveToLRUHead: 流不在 LRU 链表中");
+        return;
+    }
+    
+    // 从当前位置删除
+    g_lruList.erase(itLRU->second);
+    
+    // 插入到头部
+    g_lruList.push_front(key);
+    g_lruIterMap[key] = g_lruList.begin();
+}
+
+// 查询流缓存（返回 true 表示命中且未过期）
+static bool LookupFlowCache(const FlowKey& key, uint32_t& selectedIndex)
+{
+    g_cacheLookupCount++;
+    
+    uint64_t currentTime = static_cast<uint64_t>(Simulator::Now().GetNanoSeconds());
+    
+    auto it = g_flowCache.find(key);
+    if (it == g_flowCache.end())
+    {
+        // 未命中
+        return false;
+    }
+    
+    FlowCacheEntry& entry = it->second;
+    
+    // 检查是否过期
+    if (IsFlowExpired(entry, currentTime))
+    {
+        NS_LOG_DEBUG("流缓存过期: srcIP=" << key.srcIP 
+                     << " dstIP=" << key.dstIP
+                     << " srcPort=" << key.srcPort
+                     << " dstPort=" << key.dstPort
+                     << " proto=" << static_cast<uint32_t>(key.protocol)
+                     << " 创建时间=" << (currentTime - entry.createTime) / 1e9 << "s前"
+                     << " 空闲时间=" << (currentTime - entry.lastAccessTime) / 1e9 << "s");
+        
+        RemoveFlowFromCache(key);
+        g_cacheExpiredCount++;
+        return false;
+    }
+    
+    // 命中且未过期
+    g_cacheHitCount++;
+    selectedIndex = entry.selectedIndex;
+    
+    // 更新访问时间
+    entry.lastAccessTime = currentTime;
+    entry.packetCount++;
+    
+    // 移到 LRU 头部
+    MoveToLRUHead(key);
+    
+    NS_LOG_DEBUG("流缓存命中: selectedIndex=" << selectedIndex
+                 << " 包计数=" << entry.packetCount
+                 << " 命中率=" << (100.0 * g_cacheHitCount / g_cacheLookupCount) << "%");
+    
+    return true;
+}
+
+// 插入流缓存
+static void InsertFlowCache(const FlowKey& key, uint32_t selectedIndex)
+{
+  std::cout << "[流缓存] 插入: "
+            << Ipv4Address(key.srcIP) << ":" << key.srcPort
+            << " -> " << Ipv4Address(key.dstIP) << ":" << key.dstPort
+            << " proto=" << (int)key.protocol
+            << " at t=" << Simulator::Now().GetSeconds() << "s"
+            << std::endl;
+    uint64_t currentTime = static_cast<uint64_t>(Simulator::Now().GetNanoSeconds());
+    
+    // 检查容量限制
+    if (g_flowCache.size() >= MAX_FLOW_CACHE_SIZE)
+    {
+        EvictLRU();
+    }
+    
+    // 创建新条目
+    FlowCacheEntry entry;
+    entry.selectedIndex = selectedIndex;
+    entry.createTime = currentTime;
+    entry.lastAccessTime = currentTime;
+    entry.weightVersion = g_weightVersion;
+    entry.packetCount = 1;
+    
+    // 插入 HashMap
+    g_flowCache[key] = entry;
+    
+    // 插入 LRU 链表头部
+    g_lruList.push_front(key);
+    g_lruIterMap[key] = g_lruList.begin();
+    
+    NS_LOG_DEBUG("流缓存插入: selectedIndex=" << selectedIndex
+                 << " 缓存大小=" << g_flowCache.size()
+                 << " 权重版本=" << g_weightVersion);
+}
+
+// 打印流缓存统计信息（带保护，只打印一次）
+static void PrintFlowCacheStats()
+{
+    // 检查是否已经打印过
+    if (g_statsPrinted)
+    {
+        return;
+    }
+    g_statsPrinted = true;
+    
+    if (g_cacheLookupCount == 0)
+    {
+        std::cout << "[流缓存统计] 无查询记录" << std::endl;
+        return;
+    }
+    
+    double hitRate = 100.0 * g_cacheHitCount / g_cacheLookupCount;
+    
+    std::cout << "\n========== 流缓存统计 ==========" << std::endl;
+    std::cout << "查询次数:     " << g_cacheLookupCount << std::endl;
+    std::cout << "命中次数:     " << g_cacheHitCount << std::endl;
+    std::cout << "命中率:       " << std::fixed << std::setprecision(2) << hitRate << "%" << std::endl;
+    std::cout << "过期淘汰:     " << g_cacheExpiredCount << std::endl;
+    std::cout << "LRU淘汰:      " << g_cacheLRUEvictCount << std::endl;
+    std::cout << "当前缓存大小: " << g_flowCache.size() << " / " << MAX_FLOW_CACHE_SIZE << std::endl;
+    std::cout << "权重版本:     " << g_weightVersion << std::endl;
+    std::cout << "超时配置:     绝对=" << ABSOLUTE_TIMEOUT / 1000000000ULL << "s, 空闲=" 
+              << IDLE_TIMEOUT / 1000000000ULL << "s" << std::endl;
+    std::cout << "==============================\n" << std::endl;
 }
 
 } // anonymous namespace
@@ -378,6 +780,9 @@ Ipv4GlobalRouting::LookupGlobal(Ipv4Address dest,
                                 const Ipv4Header* hdr,
                                 Ptr<const Packet> payload)
 {
+    // 检查文件是否变化并增量重新加载（纳秒级精度）
+    CheckAndReloadWeightsFile();
+    
     Ptr<Ipv4Route> rtentry = nullptr;
 
     uint32_t nodeId = m_ipv4 ? m_ipv4->GetObject<Node>()->GetId() : 0;
@@ -447,14 +852,14 @@ Ipv4GlobalRouting::LookupGlobal(Ipv4Address dest,
     {
         if (m_perflowEcmpRouting)
         {
-            // 6 元组：5 元组 + 节点重盐
+            // ==================== 基于流缓存的 Per-flow ECMP ====================
             bool ok = false;
-            uint64_t h64 = FNV64_OFFSET;
+            uint16_t sport = 0, dport = 0;
+            uint8_t proto = 0;
 
             if (hdr && payload)
             {
-                const uint8_t proto = hdr->GetProtocol();
-                uint16_t sport = 0, dport = 0;
+                proto = hdr->GetProtocol();
 
                 if (proto == 6) // TCP
                 {
@@ -481,97 +886,97 @@ Ipv4GlobalRouting::LookupGlobal(Ipv4Address dest,
 
                 if (ok)
                 {
-                    // 5 元组按字节混入（64-bit FNV-1a）
-                    Fnv64Mix32(h64, hdr->GetSource().Get());
-                    Fnv64Mix32(h64, hdr->GetDestination().Get());
-                    Fnv64Mix16(h64, sport);
-                    Fnv64Mix16(h64, dport);
-                    Fnv64MixByte(h64, proto);
+                    // 构造 FlowKey
+                    FlowKey flowKey(hdr->GetSource().Get(), 
+                                   hdr->GetDestination().Get(),
+                                   sport, dport, proto);
 
-                    // 节点重盐（第六元组）
-                    uint64_t nodeSalt = GetNodeHeavySalt(m_ipv4);
-                    Fnv64Mix64(h64, 0x9e3779b97f4a7c15ull);
-                    Fnv64Mix64(h64, nodeSalt);
-
-                    uint32_t h32 = Avalanche64To32(h64);
-
-                    // ---- 加权选择（按节点，从 ./ecmpProbability.txt）----
-                    std::vector<uint32_t> weights;
-                    if (GetNodeWeights(nodeId, allRoutes.size(), weights))
+                    // 先查询流缓存
+                    if (LookupFlowCache(flowKey, selectIndex))
                     {
-                        uint64_t total = 0;
-                        for (uint32_t v : weights) total += v;
-
-                        // 无偏缩放
-                        uint64_t r = (static_cast<uint64_t>(h32) * total) >> 32;
-
-                        uint64_t acc = 0;
-                        size_t idx = 0;
-                        for (; idx < weights.size(); ++idx)
-                        {
-                            acc += weights[idx];
-                            if (r < acc) break;
-                        }
-                        if (idx >= weights.size()) idx = weights.size() - 1;
-                        selectIndex = static_cast<uint32_t>(idx);
-
-                        std::ostringstream wss;
-                        wss << "[";
-                        for (size_t ii = 0; ii < weights.size(); ++ii)
-                        {
-                            if (ii) wss << ",";
-                            wss << weights[ii];
-                        }
-                        wss << "]";
-
-                        NS_LOG_INFO("ECMP模式: 基于流(加权, 按节点) node=" << nodeId);
-                        NS_LOG_INFO("五元组: " << hdr->GetSource() << ":" << sport
+                        // 缓存命中且未过期，直接使用缓存结果
+                        NS_LOG_DEBUG("流缓存命中: node=" << nodeId
+                                    << " flow=" << hdr->GetSource() << ":" << sport
                                     << " -> " << hdr->GetDestination() << ":" << dport
                                     << " proto=" << static_cast<unsigned>(proto)
-                                    << " hash32=" << h32
-                                    << " totalW=" << total
-                                    << " r=" << r
-                                    << " weights=" << wss.str()
-                                    << " 选中index=" << selectIndex);
+                                    << " cachedIndex=" << selectIndex);
                     }
                     else
                     {
-                        // 权重不可用 -> 等权回退（高质量哈希后的等权映射）
-                        selectIndex = (static_cast<uint64_t>(h32) * allRoutes.size()) >> 32;
-                        NS_LOG_WARN("ECMP 节点权重不可用（或不足），回退等权 node=" << nodeId
-                                    << " hash32=" << h32
-                                    << " index=" << selectIndex
-                                    << " paths=" << allRoutes.size());
+                        // 缓存未命中或已过期，重新哈希选路
+                        uint64_t h64 = FNV64_OFFSET;
+
+                        // 计算5元组哈希
+                        Fnv64Mix32(h64, hdr->GetSource().Get());
+                        Fnv64Mix32(h64, hdr->GetDestination().Get());
+                        Fnv64Mix16(h64, sport);
+                        Fnv64Mix16(h64, dport);
+                        Fnv64MixByte(h64, proto);
+
+                        // 节点重盐（第六元组）
+                        uint64_t nodeSalt = GetNodeHeavySalt(m_ipv4);
+                        Fnv64Mix64(h64, 0x9e3779b97f4a7c15ull);
+                        Fnv64Mix64(h64, nodeSalt);
+
+                        uint32_t h32 = Avalanche64To32(h64);
+                        
+                        std::vector<uint32_t> weights;
+                        if (GetNodeWeights(nodeId, allRoutes.size(), weights))
+                        {
+                            // 加权选择
+                            uint64_t total = 0;
+                            for (uint32_t v : weights) total += v;
+
+                            uint64_t r = (static_cast<uint64_t>(h32) * total) >> 32;
+
+                            uint64_t acc = 0;
+                            size_t idx = 0;
+                            for (; idx < weights.size(); ++idx)
+                            {
+                                acc += weights[idx];
+                                if (r < acc) break;
+                            }
+                            if (idx >= weights.size()) idx = weights.size() - 1;
+                            selectIndex = static_cast<uint32_t>(idx);
+
+                            NS_LOG_INFO("新流选路: node=" << nodeId
+                                       << " 5-tuple: " << hdr->GetSource() << ":" << sport
+                                       << " -> " << hdr->GetDestination() << ":" << dport
+                                       << " proto=" << static_cast<unsigned>(proto)
+                                       << " hash32=" << h32
+                                       << " selected=" << selectIndex
+                                       << " (weights version=" << g_weightVersion << ")");
+                        }
+                        else
+                        {
+                            // 等权回退
+                            selectIndex = (static_cast<uint64_t>(h32) * allRoutes.size()) >> 32;
+                            NS_LOG_WARN("No weights for node=" << nodeId 
+                                       << ", equal fallback index=" << selectIndex);
+                        }
+
+                        // 插入流缓存
+                        InsertFlowCache(flowKey, selectIndex);
                     }
-                    // ---- 加权选择结束 ----
                 }
                 else
                 {
-                    NS_LOG_INFO("ECMP模式: 默认 node=" << nodeId);
                     selectIndex = 0;
                 }
             }
             else
             {
-                NS_LOG_INFO("ECMP模式: 默认 node=" << nodeId);
                 selectIndex = 0;
             }
         }
         else if (m_randomEcmpRouting)
         {
-            NS_LOG_INFO("ECMP模式: 基于包 node=" << nodeId);
             selectIndex = m_rand->GetInteger(0, allRoutes.size() - 1);
         }
         else
         {
-            NS_LOG_INFO("ECMP模式: 默认 node=" << nodeId);
             selectIndex = 0;
         }
-    }
-    else
-    {
-        NS_LOG_INFO("ECMP模式: 默认 node=" << nodeId);
-        selectIndex = 0;
     }
 
     Ipv4RoutingTableEntry* route = allRoutes.at(selectIndex);
@@ -583,7 +988,6 @@ Ipv4GlobalRouting::LookupGlobal(Ipv4Address dest,
     rtentry->SetOutputDevice(m_ipv4->GetNetDevice(route->GetInterface()));
     return rtentry;
 }
-
 
 uint32_t
 Ipv4GlobalRouting::GetNRoutes() const
@@ -691,6 +1095,9 @@ Ipv4GlobalRouting::AssignStreams(int64_t stream)
 void
 Ipv4GlobalRouting::DoDispose()
 {
+    // 打印流缓存统计信息（带保护，只打印一次）
+    PrintFlowCacheStats();
+    
     for (auto i = m_hostRoutes.begin(); i != m_hostRoutes.end(); i = m_hostRoutes.erase(i))
     {
         delete (*i);
@@ -875,4 +1282,5 @@ Ipv4GlobalRouting::SetIpv4(Ptr<Ipv4> ipv4)
 }
 
 } // namespace ns3
+
 
